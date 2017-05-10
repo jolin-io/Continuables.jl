@@ -139,6 +139,7 @@ function creduce!(op!, acc, continuable)
   continuable() do x
     op!(acc, x)
   end
+  acc
 end
 
 

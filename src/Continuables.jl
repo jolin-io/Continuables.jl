@@ -1,9 +1,27 @@
+"""
+A Continuable is a function which takes a single argument function a -> b
+
+We could have made most of the core functionality work for general functions a... -> b
+however the semantics become too complicated very soon.
+
+For instance for product. How should the product look like? say we have two continuables and
+name the continuation's arguments a... and  b... respectively.
+How to call the follow up continuation then?
+cont(a..., b...) or cont(a, b)?
+Probably something like if isa(a and b, SingletonTuple) then cont(a...,b...)
+else cont(a,b). However this seems to complicate things unnecessarily complex.
+
+Another point is for example the interaction with iterables which always deliver tuples.
+
+See also this github issue https://github.com/JuliaLang/julia/issues/6614 for tuple deconstructing which
+would give a similar familarity.
+"""
 module Continuables
 export
   crange, ccollect, @c2a, astask, @c2t, ascontinuable, @i2c, stoppable, stop,
   cconst, cmap, cfilter, creduce, mzip, tzip, cproduct, chain, ccycle,
   ctake, ctakewhile, cdrop, cdropwhile, cflatten, cpartition, cgroupbyreduce,
-  cgroupby, cnth, ccount, crepeatedly, citerate, Ref, @Ref
+  cgroupby, cnth, ccount, crepeatedly, citerate, Ref, @Ref, cenumerate
 
 ## Core functions --------------------------------------------------
 
@@ -61,20 +79,35 @@ ccollect(continuable) = creduce!(push!, [], continuable)
 import Base.collect
 collect(continuable::Function) = ccollect(continuable)
 
-macro c2a(expr)
-  :(ccollect($expr))
+@Ref function ccollect(continuable, n)
+  a = Vector(n)
+  # unfortunately the nested call of enumerate results in slower code, hence we have a manual index here
+  # this is so drastically that for small n this preallocate version with enumerate would be slower than the non-preallocate version
+  i = Ref(1)
+  continuable() do x
+    a[i] = x
+    i += 1
+  end
+  a
 end
 
 astask(continuable) = @task continuable(produce)
-macro c2t(expr)
-  :(astask($expr))
-end
 
 ascontinuable(iterable) = cont -> begin
   for i in iterable
     cont(i)
   end
 end
+
+
+macro c2a(expr)
+  :(ccollect($expr))
+end
+
+macro c2t(expr)
+  :(astask($expr))
+end
+
 macro i2c(expr)
   :(ascontinuable($expr))
 end
@@ -110,6 +143,7 @@ cenumerate(continuable) = cont -> @Ref begin
     i += 1
   end
 end
+cenumerate(cont, continuable) = cenumerate(continuable)(cont)
 
 cmap(func, continuable) = cont -> begin
   continuable(x -> cont(func(x)))

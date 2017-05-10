@@ -281,12 +281,19 @@ end
 cdropwhile(cont, continuable, bool::Function) = cdropwhile(continuable, bool)(cont)
 
 
+cflatten(iterable) = cont -> begin
+  for continuable in iterable
+    continuable(cont)
+  end
+end
+
 cflatten(continuable::Function) = cont -> begin
   continuable() do subcontinuable
     subcontinuable(cont)
   end
 end
-cflatten(cont, continuable::Function) = cflatten(continuable)(cont)
+
+cflatten(cont, iterable) = cflatten(iterable)(cont)
 
 
 cpartition(continuable, n::Integer) = cont -> @Ref begin

@@ -59,7 +59,7 @@ crange(cont::Function, first, step, last) = crange(first, step, last)(cont)
 
 ccollect(continuable) = creduce!(push!, [], continuable)
 import Base.collect
-collect(continuable::Function)) = ccollect(continuable)
+collect(continuable::Function) = ccollect(continuable)
 
 macro c2a(expr)
   :(ccollect($expr))

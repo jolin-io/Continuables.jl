@@ -15,7 +15,12 @@ Another point is for example the interaction with iterables which always deliver
 
 See also this github issue https://github.com/JuliaLang/julia/issues/6614 for tuple deconstructing which
 would give a similar familarity.
+
+
+Many documentation strings are taken and adapted from
+https://github.com/JuliaCollections/Iterators.jl/blob/master/src/Iterators.jl.
 """
+# TODO copy documentation strings
 module Continuables
 export
   crange, ccollect, @c2a, astask, @c2t, ascontinuable, @i2c, stoppable, stop,

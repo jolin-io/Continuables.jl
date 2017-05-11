@@ -78,37 +78,21 @@ end))
 
 import BenchmarkTools.@benchmark
 
-type Ref2{T}
-  x::T
-end
 
-
-function crange(cont, n::Integer)
-  # @_inline_meta
+crange(n::Integer) = cont -> begin
   for i in 1:n
     cont(i)
   end
 end
 
-crange(n::Integer) = cont -> crange(cont, n)
+crange(cont, n::Integer) = crange(n)(cont)
 
-
-crange2(n::Integer) = cont -> begin
-  # @_inline_meta
+function trange(n::Integer)
   for i in 1:n
-    cont(i)
+    produce(i)
   end
 end
 
-crange2(cont, n::Integer) = crange2(n)(cont)
-
-# function sum_continuable(continuable)
-#   a = Ref(0)
-#   continuable() do i
-#     a.x += i
-#   end
-#   a.x
-# end
 
 @Ref function sum_continuable(continuable)
   a = Ref(0)
@@ -126,26 +110,18 @@ function sum_continuable_withoutref(continuable)
   a
 end
 
-function collect_continuable(continuable)
-  a = []
-  continuable() do i
-    push!(a, i)
-  end
-  a
-end
-
-
-
-function trange(n::Integer)
-  for i in 1:n
-    produce(i)
-  end
-end
-
 function sum_iterable(it)
   a = 0
   for i in it
     a += i
+  end
+  a
+end
+
+function collect_continuable(continuable)
+  a = []
+  continuable() do i
+    push!(a, i)
   end
   a
 end

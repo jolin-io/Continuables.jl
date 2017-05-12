@@ -26,16 +26,21 @@ export
   crange, ccollect, @c2a, astask, @c2t, ascontinuable, @i2c, stoppable, stop,
   cconst, cmap, cfilter, creduce, mzip, tzip, cproduct, chain, ccycle,
   ctake, ctakewhile, cdrop, cdropwhile, cflatten, cpartition, cgroupbyreduce,
-  cgroupby, cnth, ccount, crepeatedly, citerate, Ref, @Ref, cenumerate
+  cgroupby, cnth, ccount, crepeatedly, citerate, Ref, @Ref, cenumerate, triangle,
+  FRef, len_triangle, subsets, check_empty
 
 ## Core functions --------------------------------------------------
 
 # we use Julia's default Ref type for single variable references
+# however need to use a more liberal Ref for functions as each function has its very own type the normal Ref won't allow overwrites
+type FRef
+  x::Function
+end
 
 function refify!(expr::Expr, Refs::Vector{Symbol}=Vector{Symbol}())
   for (i, a) in enumerate(expr.args)
     if (isa(a, Expr) && a.head == :(=) && isa(a.args[1], Symbol)
-        && isa(a.args[2], Expr) && a.args[2].args[1] == :Ref && a.args[2].head == :call)
+        && isa(a.args[2], Expr) && a.args[2].args[1] ∈ [:Ref, :FRef] && a.args[2].head == :call)
       push!(Refs, a.args[1])
 
     else
@@ -138,6 +143,18 @@ end
 stoppable(cont, continuable) = stoppable(continuable)(cont)
 
 
+check_empty(continuable) = cont -> @Ref begin
+  empty = Ref(true)
+  continuable() do x
+    cont(x)
+    if empty
+      empty = false
+    end
+  end
+  empty
+end
+
+
 cconst(value) = cont -> cont(value)
 
 ## core functional helpers ----------------------------------------------------------
@@ -236,7 +253,7 @@ _product(c1, c2) = cont -> begin
 end
 
 @Ref function cproduct(c1, c2, cs...)
-  acc = Ref(cproduct(c1, c2))  # make first into singleton tuple to start recursion
+  acc = FRef(cproduct(c1, c2))  # make first into singleton tuple to start recursion
   for continuable in cs
     acc = _product(acc, continuable)
   end
@@ -398,6 +415,90 @@ function cgroupbyreduce(by, continuable, op2, op1=identity)
   d
 end
 cgroupby(f, continuable) = cgroupbyreduce(f, continuable, push!, x -> [x])
+
+
+## triangle and subset ------------------------------------------------------------------
+
+triangle(offset::Integer, c1, c2) = cont -> @Ref begin
+  i = Ref(1)
+  c1() do x
+    ctake(c2, i - offset) do y
+      cont((x,y))
+    end
+    i += 1
+  end
+end
+
+# sum_{i=1}^n i(i-k) = sum_{i=1}^n i^2  - sum_{i=1}^n ik = n(n+1)(2n+1)/6 - k n(n+1)/2 = 1/6 n(n+1) (2n+1 - 3k)    = n^5/5 + n^4/2 + n^3/3 - kn^2/2 - n(15k+1)/30
+# it is in fact a recursive thing...
+# for dim=2  we have sum_{i=1}^n i-k = n/2 (n+1-k)
+
+using Memoize
+
+# we use memoize as this is only needed for a low number of results, it is like table thus
+@memoize function len_triangle(n::Integer, offset::Integer=0, dim::Integer=2)
+  if dim == 1
+    return n
+  end
+
+  # otherwise recurse
+  acc = 0
+  for i in 1:(n - offset)
+    acc += len_triangle(i, offset, dim-1)
+  end
+  acc
+end
+
+_triangle(offset::Integer, c1, c2, dim_c2::Integer) = cont -> @Ref begin
+  i = Ref(1)
+  c1() do x
+    ctake(c2, len_triangle(i - offset, offset, dim_c2)) do y
+      cont((x, y...))
+    end
+    i += 1
+  end
+end
+
+@Ref function triangle(offset::Integer, c1, c2, cs...)
+  dim = Ref(2)
+  acc = FRef(triangle(offset, c1, c2))
+  for c in cs
+    acc = _triangle(offset, c, acc, dim)
+    dim += 1
+  end
+  acc
+end
+
+function subsets(continuable, k::Integer)
+  if k==1
+    cmap(tuple, continuable)
+  else
+    cs = (continuable, continuable)
+    for i in 3:k
+      cs = tuple(cs..., continuable)
+    end
+    triangle(1, cs...)
+  end
+end
+
+subsets(continuable) = cont -> begin
+# TODO Discuss: the first n=1000 iterations or something could be done without check_empty which will improve performance for long continuables,
+# while decreasing performance for small continuables of course because of many empty continuations
+  k = 1
+  while true
+    empty = check_empty(subsets(continuable, k))(cont)
+    if empty
+      break
+    end
+    k += 1
+  end
+end
+
+
+
+
+
+
 
 
 # subsets seem to be implemented for arrays in the first place (and not iterables in general)

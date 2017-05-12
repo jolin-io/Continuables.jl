@@ -23,11 +23,11 @@ https://github.com/JuliaCollections/Iterators.jl/blob/master/src/Iterators.jl.
 # TODO copy documentation strings
 module Continuables
 export
-  crange, ccollect, @c2a, astask, @c2t, ascontinuable, @i2c, stoppable, stop,
+  FRef, crange, ccollect, @c2a, astask, @c2t, ascontinuable, @i2c, stoppable, stop,
   cconst, cmap, cfilter, creduce, mzip, tzip, cproduct, chain, ccycle,
   ctake, ctakewhile, cdrop, cdropwhile, cflatten, cpartition, cgroupbyreduce,
-  cgroupby, cnth, ccount, crepeatedly, citerate, Ref, @Ref, cenumerate, triangle,
-  FRef, len_triangle, subsets, check_empty
+  cgroupby, cnth, ccount, crepeatedly, citerate, Ref, @Ref, cenumerate, ccombinations,
+  csubsets, check_empty
 
 ## Core functions --------------------------------------------------
 
@@ -417,13 +417,20 @@ end
 cgroupby(f, continuable) = cgroupbyreduce(f, continuable, push!, x -> [x])
 
 
-## triangle and subset ------------------------------------------------------------------
+## ccombinations and subset ------------------------------------------------------------------
+# Note that the function ccombinations Base corresponds to the function csubsets in Iterators.jl
+# we follow Iterators.jl because we think ccombinations can also be meaningfully used for ccombinations between arbitrary continuables
+# csubsets is an intuitive subset denoting ccombinations with itself
 
-triangle(offset::Integer, c1, c2) = cont -> @Ref begin
+ccombinations(offset::Integer, c1, c2) = cont -> @Ref begin
+  # TODO Discuss: is stoppable good here or does it just makes things slower instead of faster? we decided to leave it out for now as this is really meant as the baseclass which almost always works
   i = Ref(1)
   c1() do x
-    ctake(c2, i - offset) do y
-      cont((x,y))
+    nr_previous = i - offset
+    if nr_previous > 0  # ctake would also work with negative values, however we can shortcut here to make it faster
+      ctake(c2, nr_previous) do y
+        cont((x,y))
+      end
     end
     i += 1
   end
@@ -436,7 +443,7 @@ end
 using Memoize
 
 # we use memoize as this is only needed for a low number of results, it is like table thus
-@memoize function len_triangle(n::Integer, offset::Integer=0, dim::Integer=2)
+@memoize function len_ccombinations(n::Integer, offset::Integer=0, dim::Integer=2)
   if dim == 1
     return n
   end
@@ -444,32 +451,43 @@ using Memoize
   # otherwise recurse
   acc = 0
   for i in 1:(n - offset)
-    acc += len_triangle(i, offset, dim-1)
+    acc += len_ccombinations(i, offset, dim-1)
   end
   acc
 end
 
-_triangle(offset::Integer, c1, c2, dim_c2::Integer) = cont -> @Ref begin
+_ccombinations(offset::Integer, c1, c2, dim_c2::Integer) = cont -> @Ref begin
   i = Ref(1)
-  c1() do x
-    ctake(c2, len_triangle(i - offset, offset, dim_c2)) do y
-      cont((x, y...))
+  stoppable(c1) do x
+    nr_previous_combinations = len_ccombinations(i - offset, offset, dim_c2)
+    if nr_previous_combinations > 0
+      ctake(c2, nr_previous_combinations) do y
+        cont((x, y...))
+      end
     end
     i += 1
   end
 end
 
-@Ref function triangle(offset::Integer, c1, c2, cs...)
+@Ref function ccombinations(offset::Integer, c1, c2, cs...)
   dim = Ref(2)
-  acc = FRef(triangle(offset, c1, c2))
+  acc = FRef(ccombinations(offset, c1, c2))
   for c in cs
-    acc = _triangle(offset, c, acc, dim)
+    acc = _ccombinations(offset, c, acc, dim)
     dim += 1
   end
   acc
 end
 
-function subsets(continuable, k::Integer)
+ccombinations(cont, offset::Integer, cs...) = ccombinations(offset, cs...)(cont)
+ccombinations(cs...) = ccombinations(1, cs...)
+ccombinations_with_replacement(cs...) = ccombinations(0, cs...)
+ccombinations(cont, cs::StoredIterable) = ccombinations(cs...)(cont)
+ccombinations_with_replacement(cont, cs::StoredIterable) = ccombinations_with_replacement(cs...)(cont)
+
+
+
+function csubsets(continuable, k::Integer)
   if k==1
     cmap(tuple, continuable)
   else
@@ -477,35 +495,31 @@ function subsets(continuable, k::Integer)
     for i in 3:k
       cs = tuple(cs..., continuable)
     end
-    triangle(1, cs...)
+    ccombinations(1, cs...)
   end
 end
+csubsets(cont, continuable, k::Integer) = csubsets(continuable, k)(cont)
 
-subsets(continuable) = cont -> begin
+csubsets(continuable) = cont -> begin
 # TODO Discuss: the first n=1000 iterations or something could be done without check_empty which will improve performance for long continuables,
 # while decreasing performance for small continuables of course because of many empty continuations
   k = 1
   while true
-    empty = check_empty(subsets(continuable, k))(cont)
+    empty = check_empty(csubsets(continuable, k))(cont)
     if empty
       break
     end
     k += 1
   end
 end
+csubsets(cont, continuable) = csubsets(continuable)(cont)
 
 
-
-
-
-
-
-
-# subsets seem to be implemented for arrays in the first place (and not iterables in general)
-# hence better use Iterators.subsets directly
 
 # peekiter is the only method if Iterators.jl missing. However it in fact makes no sense for continuables
 # as they are functions and don't get consumed
+
+
 
 ## extract values from continuables  ----------------------------------------
 

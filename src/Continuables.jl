@@ -21,26 +21,75 @@ Many documentation strings are taken and adapted from
 https://github.com/JuliaCollections/Iterators.jl/blob/master/src/Iterators.jl.
 """
 # TODO copy documentation strings
+# TODO default to regarding continuables as functions?
+
+## Considering Return Types of functions
+
+# https://discourse.julialang.org/t/using-core-inference-return-type/2945/2
+# T = typeof(f(a,b))
+# This is actually a pretty good way to do it if you
+# have canonical values for a and b that you know the function accepts and does not throw an error on
+# know the function is type stable (although not necessarily type inferrable)
+# the function has no side effects
+# The computation is not done (i.e. optimized out) if the function has no side effects, is type stable, does not depend on any global state, and the compiler is able to figure all these facts out. Providing the Base.@pure annotation may be necessary for all this to be true.
+
+# https://github.com/JuliaLang/julia/issues/1090
+
+# @schlichtanders one easy way of getting the return type without getting your hands dirty
+# (if you are doing a map or something) is to call map on an empty subset of the array.
+# E.g. a = [2.1, 2]; eltype(map(x->x, a[1:0]))
+
+
+
+## module start
+
 module Continuables
 export
-  FRef, crange, ccollect, @c2a, astask, @c2t, ascontinuable, @i2c, stoppable, stop,
-  cconst, cmap, cfilter, creduce, mzip, tzip, cproduct, chain, ccycle,
+  FRef, crange, ccollect, @c2a, astask, @c2t, ascontinuable, @i2c, stoppable, stop, @stoppable,
+  cconst, cmap, cfilter, creduce, creduce!, mzip, tzip, cproduct, chain, ccycle,
   ctake, ctakewhile, cdrop, cdropwhile, cflatten, cpartition, cgroupbyreduce,
-  cgroupby, cnth, ccount, crepeatedly, citerate, Ref, @Ref, cenumerate, ccombinations,
-  csubsets, check_empty
+  cgroupby, cnth, ccount, crepeatedly, citerate, @Ref, FRef, MRef, ARef, cenumerate, ccombinations,
+  csubsets, check_empty, memoize, nth, second
 
 ## Core functions --------------------------------------------------
 
-# we use Julia's default Ref type for single variable references
-# however need to use a more liberal Ref for functions as each function has its very own type the normal Ref won't allow overwrites
-type FRef
-  x::Function
+# we can use Julia's default Ref type for single variable references
+# however Ref unfortunately results into immutable errors when used with Array...
+# so we want to have a general easy version to reference something.
+# To avoid visual noise, we introduce a version of Ref which is always mutable
+type MRef{T}
+  x::T
+end
+# alternatively, specifying the concrete parametric Type also ensures immutability in the current implementation
+
+# some more aliases are provided
+# (because of the concrete type, they work with both MRef and Ref as references)
+typealias FRef Ref{Function}
+typealias ARef Ref{Any}
+
+function replace_exprargs!(expr::Expr, old, new)
+  for (i, subexpr) in enumerate(expr.args)
+    if subexpr == old
+      expr.args[i] = new
+    end
+  end
+end
+
+function replace_subexpr!(expr::Expr, old, new)
+  replace_exprargs!(expr, old, new)
+  for subexpr in expr.args
+    replace_subexpr!(subexpr, old, new)
+  end
 end
 
 function refify!(expr::Expr, Refs::Vector{Symbol}=Vector{Symbol}())
   for (i, a) in enumerate(expr.args)
     if (isa(a, Expr) && a.head == :(=) && isa(a.args[1], Symbol)
-        && isa(a.args[2], Expr) && a.args[2].args[1] ∈ [:Ref, :FRef] && a.args[2].head == :call)
+        && isa(a.args[2], Expr) && a.args[2].head == :call && length(a.args[2].args) > 0
+        && (a.args[2].args[1] ∈ [:Ref, :FRef, :ARef, :MRef]  # simple call
+            || (isa(a.args[2].args[1], Expr)
+                && a.args[2].args[1].head == :curly  # call with parametric type
+                && a.args[2].args[1].args[1] in [:Ref, :MRef])))
       push!(Refs, a.args[1])
 
     else
@@ -89,8 +138,8 @@ ccollect(continuable) = creduce!(push!, [], continuable)
 import Base.collect
 collect(continuable::Function) = ccollect(continuable)
 
-@Ref function ccollect(continuable, n)
-  a = Vector(n)
+@Ref function ccollect(continuable, n, T=Any)
+  a = Vector{T}(n)
   # unfortunately the nested call of enumerate results in slower code, hence we have a manual index here
   # this is so drastically that for small n this preallocate version with enumerate would be slower than the non-preallocate version
   i = Ref(1)
@@ -123,24 +172,52 @@ macro i2c(expr)
 end
 
 
-type StopException{T} <: Exception
-  ret::T
+type StopException <: Exception
+  ret::Any  # for now we have to make ret changeable (i.e. type Any) because we change it on runtime
 end
-Stop = StopException(nothing)
-stop() = throw(Stop)
-stop(ret) = throw(StopException(ret))
+stop = StopException(nothing)
+# when calling a StopException, make this raise the Exception itself
+function (exc::StopException)(ret)
+  exc.ret = ret
+  throw(exc)
+end
+function (exc::StopException)()
+  throw(exc)
+end
 
-stoppable(continuable) = cont -> begin
+
+stoppable(continuable) = cond_cont -> begin
+  thisverystop = StopException(nothing)
+  cont = cond_cont(thisverystop)
   try
     continuable(cont)
   catch exc
-    if !isa(exc, StopException)
+    if exc !== thisverystop
       rethrow(exc)
     end
     return exc.ret
   end
 end
-stoppable(cont, continuable) = stoppable(continuable)(cont)
+stoppable(cond_cont, continuable) = stoppable(continuable)(cond_cont)
+
+macro stoppable(expr)
+  @assert expr.head == :call
+  # assure this is a call of a function with first argument being anonymous function
+  # this does not work with named functions, however then also syntactically the belonging between stoppable and stop() is no longer obvious
+  @assert expr.args[2].head == :->
+
+  cond_cont = Expr(:->, :stop, expr.args[2])  # we simply have to overwrite the reference to Stop so that the do continuation will see this Stop instead of the default stop
+
+  if length(expr.args) == 2
+    # if the argument is called with a single argument only, we assume this is the continuation and hence expr.args[1] is the continuable itself
+    continuable = expr.args[1]
+  else
+     # we assume that without continuation, the original method returns a continuable
+     # skip continuation arg for original continuable
+    continuable = Expr(:call, expr.args[1], expr.args[3:end]...)
+  end
+  esc(Expr(:call, :stoppable, cond_cont, continuable))
+end
 
 
 check_empty(continuable) = cont -> @Ref begin
@@ -183,8 +260,10 @@ end
 
 cfilter(cont, bool, continuable) = cfilter(bool, continuable)(cont)
 
-@Ref function creduce(op, v0, continuable)
-  acc = Ref(v0)
+@Ref function creduce{T}(op, v0::T, continuable)
+  # we have to use always mutable Ref here, Ref(array) is unfortunately not mutable,
+  # but Ref{Array}(array) surprisingly is (and also MRef{array})
+  acc = Ref{T}(v0)
   continuable() do x
     acc = op(acc, x)
   end
@@ -197,6 +276,14 @@ function creduce!(op!, acc, continuable)
   end
   acc
 end
+
+import Base.sum
+sum(continuable::Function) = creduce(+, 0, continuable)
+
+import Base.reduce
+reduce(op, v0, continuable::Function) = creduce(op, v0, continuable)
+
+
 
 
 ## zip ----------------------------
@@ -263,12 +350,12 @@ end
 cproduct(cont::Function, cs::StoredIterable) = cproduct(cs...)(cont)
 
 
-chain(cs::Function...) = cont -> begin
+cchain(cs::Function...) = cont -> begin
   for continuable in cs
     continuable(cont)
   end
 end
-chain(cont::Function, cs::StoredIterable) = chain(cs...)(cont)
+cchain(cont::Function, cs::StoredIterable) = cchain(cs...)(cont)
 
 
 ccycle(continuable::Function) = cont -> begin
@@ -291,7 +378,7 @@ ccycle(cont::Function, continuable::Function, n::Integer) = ccylce(continuable, 
 # generic cmap? only with zip and this is not efficient unfortunately
 ctake(continuable::Function, n::Integer) = cont -> @Ref begin
   i = Ref(0)
-  stoppable(continuable) do x
+  @stoppable continuable() do x
     i += 1
     if i > n
       stop()
@@ -301,12 +388,15 @@ ctake(continuable::Function, n::Integer) = cont -> @Ref begin
 end
 ctake(cont::Function, continuable::Function, n::Integer) = ctake(continuable, n)(cont)
 
+# note the two stoppable versions are exactly equivalent, we use both version to illustrate @stoppable
 ctakewhile(continuable::Function, bool::Function) = cont -> begin
-  stoppable(continuable) do x
-    if !bool(x)
-      stop()
+  stoppable(continuable) do stop
+    x -> begin
+      if !bool(x)
+        stop()
+      end
+      cont(x)
     end
-    cont(x)
   end
 end
 ctakewhile(cont, continuable, bool) = ctakewhile(continuable, bool)(cont)
@@ -353,9 +443,9 @@ end
 cflatten(cont, iterable) = cflatten(iterable)(cont)
 
 
-cpartition(continuable, n::Integer) = cont -> @Ref begin
+cpartition(continuable, n::Integer, T=Any) = cont -> @Ref begin
   i = Ref(1)
-  part = Ref(Vector(n))
+  part = Ref(Vector{T}(n))
   continuable() do x
     part[i] = x
     i += 1
@@ -370,7 +460,7 @@ cpartition(continuable, n::Integer) = cont -> @Ref begin
     cont(part)
   end
 end
-cpartition(cont, continuable, n::Integer) = cpartition(continuable, n)(cont)
+cpartition(cont, continuable, n::Integer, T=Any) = cpartition(continuable, n, T)(cont)
 
 
 cpartition(continuable, n::Integer, step::Integer) = cont -> @Ref begin
@@ -429,7 +519,8 @@ ccombinations(offset::Integer, c1, c2) = cont -> @Ref begin
     nr_previous = i - offset
     if nr_previous > 0  # ctake would also work with negative values, however we can shortcut here to make it faster
       ctake(c2, nr_previous) do y
-        cont((x,y))
+        # cont((x,y))
+        cont([x;y])
       end
     end
     i += 1
@@ -458,11 +549,12 @@ end
 
 _ccombinations(offset::Integer, c1, c2, dim_c2::Integer) = cont -> @Ref begin
   i = Ref(1)
-  stoppable(c1) do x
+  c1() do x
     nr_previous_combinations = len_ccombinations(i - offset, offset, dim_c2)
     if nr_previous_combinations > 0
       ctake(c2, nr_previous_combinations) do y
-        cont((x, y...))
+        # cont((x, y...))
+        cont([x; y])
       end
     end
     i += 1
@@ -524,9 +616,9 @@ csubsets(cont, continuable) = csubsets(continuable)(cont)
 ## extract values from continuables  ----------------------------------------
 
 
-@Ref function cnth(continuable::Function, n)
+@Ref function cnth(continuable, n::Integer)
   i = Ref(0)
-  ret = stoppable(continuable) do x
+  ret = @stoppable continuable() do x
     i += 1
     if i==n
       # CAUTION: we cannot use return here as usual because this is a subfunction. Return works here more like continue
@@ -538,6 +630,14 @@ csubsets(cont, continuable) = csubsets(continuable)(cont)
   end
   ret
 end
+
+cfirst(continuable) = cnth(continuable, 1)
+csecond(continuable) = cnth(continuable, 2)
+
+nth(continuable::Function, n::Integer) = cnth(continuable, n)
+import Base.first
+first(continuable::Function) = cfirst(continuable)
+second(continuable::Function) = csecond(continuable)
 
 @Ref function ccount(continuable)
   i = Ref(0)
@@ -572,5 +672,48 @@ crepeatedly(cont::Function, f::Function, n::Integer) = repeatedly(f, n)(cont)
   end
 end
 citerate(cont::Function, f::Function, x) = citerate(f, x)(cont)
+
+
+## Other Continuables specific helpers
+
+memoize(continuable) = @Ref begin
+  stored = []
+  firsttime = Ref(true)
+  cont -> begin
+    if firsttime
+      continuable() do x
+        cont(x)
+        push!(stored, x)
+      end
+      firsttime = false
+    else
+      for x in stored
+        cont(x)
+      end
+    end
+  end
+end
+
+memoize(continuable, n::Integer, T=Any) = @Ref begin
+  stored = Vector{T}(n)
+  firsttime = Ref(true)
+
+  cont -> begin
+    if firsttime
+      i = Ref(1)
+      continuable() do x
+        cont(x)
+        stored[i] = x
+        i += 1
+      end
+      firsttime = false
+    else
+      for x in stored
+        cont(x)
+      end
+    end
+  end
+end
+
 
 end  # module

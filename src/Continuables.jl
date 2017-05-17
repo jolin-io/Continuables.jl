@@ -512,6 +512,8 @@ cgroupby(f, continuable) = cgroupbyreduce(f, continuable, push!, x -> [x])
 # we follow Iterators.jl because we think ccombinations can also be meaningfully used for ccombinations between arbitrary continuables
 # csubsets is an intuitive subset denoting ccombinations with itself
 
+# note that the tuple implementation is actually faster than the array implementation (did benchmarking)
+
 ccombinations(offset::Integer, c1, c2) = cont -> @Ref begin
   # TODO Discuss: is stoppable good here or does it just makes things slower instead of faster? we decided to leave it out for now as this is really meant as the baseclass which almost always works
   i = Ref(1)
@@ -519,8 +521,7 @@ ccombinations(offset::Integer, c1, c2) = cont -> @Ref begin
     nr_previous = i - offset
     if nr_previous > 0  # ctake would also work with negative values, however we can shortcut here to make it faster
       ctake(c2, nr_previous) do y
-        # cont((x,y))
-        cont([x;y])
+        cont((x,y))
       end
     end
     i += 1
@@ -553,13 +554,13 @@ _ccombinations(offset::Integer, c1, c2, dim_c2::Integer) = cont -> @Ref begin
     nr_previous_combinations = len_ccombinations(i - offset, offset, dim_c2)
     if nr_previous_combinations > 0
       ctake(c2, nr_previous_combinations) do y
-        # cont((x, y...))
-        cont([x; y])
+        cont((x, y...))
       end
     end
     i += 1
   end
 end
+
 
 @Ref function ccombinations(offset::Integer, c1, c2, cs...)
   dim = Ref(2)

@@ -121,15 +121,53 @@ BenchmarkTools.Trial:
 
 @benchmark reduce(
   (acc, t) -> broadcast(+, acc, t),
-  [0;0;0],
+  (0,0,0),
   csubsets(crange(100), 3)
 )
+#=
+julia> @benchmark reduce(
+         (acc, t) -> broadcast(+, acc, t),
+         (0,0,0),
+         csubsets(crange(100), 3)
+       )
+BenchmarkTools.Trial:
+  memory estimate:  30.31 MiB
+  allocs estimate:  1480353
+  --------------
+  minimum time:     91.652 ms (1.60% GC)
+  median time:      97.805 ms (1.83% GC)
+  mean time:        106.574 ms (2.06% GC)
+  maximum time:     157.497 ms (2.37% GC)
+  --------------
+  samples:          47
+  evals/sample:     1
+=#
+
 
 @benchmark reduce(
   (acc, t) -> broadcast(+, acc, t),
   [0;0;0],
   subsets(1:100, 3)
 )
+#=
+julia> @benchmark reduce(
+         (acc, t) -> broadcast(+, acc, t),
+         [0;0;0],
+         subsets(1:100, 3)
+       )
+BenchmarkTools.Trial:
+  memory estimate:  46.88 MiB
+  allocs estimate:  808506
+  --------------
+  minimum time:     21.589 ms (11.63% GC)
+  median time:      26.535 ms (11.27% GC)
+  mean time:        28.475 ms (11.36% GC)
+  maximum time:     46.955 ms (9.24% GC)
+  --------------
+  samples:          176
+  evals/sample:     1
+=#
+
 
 @benchmark sum(cmap(sum, csubsets(crange(100), 3)))
 #=

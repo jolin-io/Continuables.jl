@@ -488,12 +488,31 @@ Note that all continuable implementations don't allocate anything. They should l
 
 - **map**
 
+  ```julia
+  @benchmark sum(cmap(x->x^2, crange(10000)))
+  @benchmark sum(imap(x->x^2, 1:10000))
+  ```
   The continuable implementation of map, i.e. ``cmap``, is a factor `26200` faster than ``imap``. The improvement in memory consumption is even bigger, a factor of ``177292``.
 
 - **product**
 
+  ```julia
+  @benchmark reduce(
+    (acc, t) -> broadcast(+, acc, t),
+    (0,0,0),
+    cproduct(crange(100), crange(100), crange(100))
+  )
+  ```
   The continuable implementation of product is a factor of `5` faster than the iterable implementation. In our example we use a factor of `3` less memory.
 
 - **subsets**
 
-  For subsets the iterable implementation is really really good. We have only a slight memory improvement (factor 1.5 in a simple test), while being factor of 3.7 slower in computation time.
+  ```julia
+  @benchmark reduce(
+    (acc, t) -> broadcast(+, acc, t),
+    (0,0,0),
+    csubsets(crange(1000), 3)
+  )
+  ```
+
+  For subsets the iterable implementation is really really good. We have only a slight memory improvement (factor 1.5 in a simple test), while being factor of 3.7 slower in computation time. Note that also this implementation of the continuable csubsets does not allocate any object, but reexecutes exactly what it needs, not more.

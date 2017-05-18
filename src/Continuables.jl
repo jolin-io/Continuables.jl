@@ -45,8 +45,8 @@ https://github.com/JuliaCollections/Iterators.jl/blob/master/src/Iterators.jl.
 
 module Continuables
 export
-  FRef, crange, ccollect, @c2a, astask, @c2t, ascontinuable, @i2c, stoppable, stop, @stoppable,
-  cconst, cmap, cfilter, creduce, creduce!, mzip, tzip, cproduct, chain, ccycle,
+  FRef, crange, ccollect, @c2a, c2a, astask, @c2t, c2t, ascontinuable, @i2c, i2c, stoppable, stop, @stoppable,
+  cconst, cmap, cfilter, creduce, creduce!, mzip, tzip, cproduct, cchain, ccycle,
   ctake, ctakewhile, cdrop, cdropwhile, cflatten, cpartition, cgroupbyreduce,
   cgroupby, cdistinct, cnth, ccount, crepeatedly, citerate, @Ref, FRef, MRef, ARef, cenumerate, ccombinations,
   csubsets, check_empty, memoize, nth, second
@@ -159,6 +159,10 @@ ascontinuable(iterable) = cont -> begin
 end
 
 
+c2a = ccollect
+c2t = astask
+i2c = ascontinuable
+
 macro c2a(expr)
   :(ccollect($expr))
 end
@@ -231,6 +235,8 @@ check_empty(continuable) = cont -> @Ref begin
   empty
 end
 
+check_empty(cont, continuable) = check_empty(continuable)(cont)
+
 
 cconst(value) = cont -> cont(value)
 
@@ -244,6 +250,23 @@ cenumerate(continuable) = cont -> @Ref begin
 end
 cenumerate(cont, continuable) = cenumerate(continuable)(cont)
 
+# generic cmap? only with zip and this is not efficient unfortunately
+"""
+    cmap(f, continuable)
+
+Continuable over values of a function applied to successive values from one continuable.
+Because of zip not being straightforwardly compatible with continuables, cmap works only for a single continuable.
+
+```jldoctest
+julia> cmap(x -> x*x, crange(7, 10)) do i
+            @show i
+       end
+i = 49
+i = 64
+i = 81
+i = 100
+```
+"""
 cmap(func, continuable) = cont -> begin
   continuable(x -> cont(func(x)))
 end
@@ -284,6 +307,21 @@ import Base.reduce
 reduce(op, v0, continuable::Function) = creduce(op, v0, continuable)
 
 
+"""
+    distinct(xs)
+
+Go through values skipping over those already encountered.
+
+```jldoctest
+julia> cdistinct(@i2c [1,1,2,1,2,4,1,2,3,4]) do i
+           @show i
+       end
+i = 1
+i = 2
+i = 4
+i = 3
+```
+"""
 cdistinct(continuable) = cont -> begin
   s = Set()
   continuable() do x
@@ -324,6 +362,27 @@ tzip(cont::Function, cs::StoredIterable) = tzip(cs...)(cont)
 ## combine continuables --------------------------------------------
 
 
+"""
+    product(cs...)
+
+Go through all combinations in the Cartesian product of the inputs.
+
+Because of ambiguity you cannot use do notation straightforwardly, but only with either wrapping the arguments into an array
+or tuple, or by calling the cproduct result again like done below in the example
+
+
+```jldoctest
+julia> cproduct(crange(3), crange(4,5))() do p
+           @show p
+       end
+p = (1,4)
+p = (1,5)
+p = (2,4)
+p = (2,5)
+p = (3,4)
+p = (3,5)
+```
+"""
 cproduct() = cont -> ()
 
 cproduct(c1) = cont -> begin
@@ -361,7 +420,33 @@ end
 cproduct(cont::Function, cs::StoredIterable) = cproduct(cs...)(cont)
 
 
-cchain(cs::Function...) = cont -> begin
+"""
+    cchain(cs...)
+
+Combine any number of continuables into one large continuable.
+`chain(continuable)` will regard `continuable` as calling on sub-continuables and flattens the hierarchy respectively.
+
+Because of ambiguity you cannot use do notation straightforwardly, but only with either wrapping the arguments into an array
+or tuple, or by calling the cchain result again like done below in the example
+
+```jldoctest
+julia> cchain(crange(3), i2c(['a', 'b', 'c']))() do i
+           @show i
+       end
+i = 1
+i = 2
+i = 3
+i = 'a'
+i = 'b'
+i = 'c'
+```
+"""
+cchain(nested_continuable) = cont -> begin
+  nested_continuable() do continuable
+    continuable(cont)
+  end
+end
+cchain(cs...) = cont -> begin
   for continuable in cs
     continuable(cont)
   end
@@ -369,6 +454,25 @@ end
 cchain(cont::Function, cs::StoredIterable) = cchain(cs...)(cont)
 
 
+
+"""
+    ccycle(continuable)
+    ccycle(continuable, n)
+
+Cycle through `iter` `n` times (or infintitely)
+
+```jldoctest
+julia> ccycle(1:3, 2) do i
+           @show i
+       end
+i = 1
+i = 2
+i = 3
+i = 1
+i = 2
+i = 3
+```
+"""
 ccycle(continuable::Function) = cont -> begin
   while true
     continuable(cont)
@@ -386,7 +490,20 @@ ccycle(cont::Function, continuable::Function, n::Integer) = ccylce(continuable, 
 
 # --------------------------
 
-# generic cmap? only with zip and this is not efficient unfortunately
+"""
+    ctake(continuable, n::Int)
+
+Like `take()`, a new continuable that goes through at most the first `n` calls of `continuable`.
+
+```jldoctest
+julia> a = crange(1,2,11)
+julia> collect(ctake(a, 3))
+3-element Array{Any,1}:
+ 1
+ 3
+ 5
+```
+"""
 ctake(continuable::Function, n::Integer) = cont -> @Ref begin
   i = Ref(0)
   @stoppable continuable() do x
@@ -453,31 +570,77 @@ end
 
 cflatten(cont, iterable) = cflatten(iterable)(cont)
 
+"""
+    partition(cs, n, [step])
 
-cpartition(continuable, n::Integer, T=Any) = cont -> @Ref begin
+Group values into `n`-tuples.
+
+```jldoctest
+julia> cpartition(crange(9), 3) do i
+           @show i
+       end
+i = [1,2,3]
+i = [4,5,6]
+i = [7,8,9]
+```
+
+If the `step` parameter is set, each tuple is separated by `step` values.
+
+```jldoctest
+julia> cpartition(crange(9), 3, 2) do i
+           @show i
+       end
+i = [1,2,3]
+i = [3,4,5]
+i = [5,6,7]
+i = [7,8,9]
+
+julia> cpartition(crange(9), 3, 3) do i
+           @show i
+       end
+i = [1,2,3]
+i = [4,5,6]
+i = [7,8,9]
+
+julia> cpartition(crange(9), 2, 3) do i
+           @show i
+       end
+i = [1,2]
+i = [4,5]
+i = [7,8]
+```
+"""
+cpartition(continuable, n::Integer, T::Type=Void) = cont -> @Ref begin
+  # TODO one could add the option to extract T from the first element of the continuable
+  if T === Void
+    T = typeof(first(continuable))
+  end
   i = Ref(1)
-  part = Ref(Vector{T}(n))
+  part = MRef(Vector{T}(n))  # Ref(array) is immutable, would have to use Ref{Vector{T}}, but this is much worse readible
   continuable() do x
     part[i] = x
     i += 1
     if i > n
       cont(part)
-      part = Vector(n)  # extract return type from cont function, possible? I think not, julia is not haskell... unfortunately
+      part = Vector{T}(n)
       i = 1
     end
   end
-  # final bit # TODO is this wanted? with additional step parameter I think this is mostly unwanted
-  if i > 1
-    cont(part)
-  end
+  # final bit # TODO is this wanted? Iterators does not implement it, hence lets get rid of it
+  # if i > 1
+  #   cont(part)
+  # end
 end
-cpartition(cont, continuable, n::Integer, T=Any) = cpartition(continuable, n, T)(cont)
+cpartition(cont, continuable, n::Integer, T::Type=Void) = cpartition(continuable, n, T)(cont)
 
 
-cpartition(continuable, n::Integer, step::Integer) = cont -> @Ref begin
+cpartition(continuable, n::Integer, step::Integer, T::Type=Void) = cont -> @Ref begin
+  if T === Void
+    T = typeof(first(continuable))
+  end
   i = Ref(0)
   n_overlap = n - step
-  part = Ref(Vector(n))  # TODO get element-type from function return type
+  part = MRef(Vector{T}(n))  # Ref(array) is immutable, would have to use Ref{Vector{T}}, but this is much worse readible
   continuable() do x
     i += 1
     if i > 0  # if i is negative we simply skip these
@@ -487,22 +650,38 @@ cpartition(continuable, n::Integer, step::Integer) = cont -> @Ref begin
       cont(part)
       if n_overlap > 0
         overlap = part[1+step:n]
-        part = Vector(n)  # TODO get element-type from function return type
+        part = Vector{T}(n)
         part[1:n_overlap] = overlap
       else
         # we need to recreate new part because of references
-        part = Vector(n)  # TODO get element-type from function return type
+        part = Vector{T}(n)
       end
       i = n_overlap
     end
   end
 end
 
-cpartition(cont, continuable, n::Integer, step::Integer) = cpartition(continuable, n, step)(cont)
+cpartition(cont, continuable, n::Integer, step::Integer, T::Type=Void) = cpartition(continuable, n, step, T)(cont)
 
 # the interface is different from Itertools.jl
 # we directly return an OrderedDictionary instead of a iterable of values only
 import DataStructures.OrderedDict
+"""
+    cgroupbyreduce(by, continuable, op2, op1=identity)
+
+Combines consecutive values that share the same result of applying `f` into an OrderedDict.
+`op1` each first element to the accumulation type, and `op2(acc, x)` combines the newly found value
+into the respective accumulator.
+
+```jldoctest
+julia> cgroupbyreduce(x -> div(x, 3), crange(10), +)
+DataStructures.OrderedDict{Any,Any} with 4 entries:
+  0 => 3
+  1 => 12
+  2 => 21
+  3 => 19
+```
+"""
 function cgroupbyreduce(by, continuable, op2, op1=identity)
   d = OrderedDict()
   continuable() do x
@@ -515,6 +694,21 @@ function cgroupbyreduce(by, continuable, op2, op1=identity)
   end
   d
 end
+
+# TODO go further her - groupby is different from Iterators!!
+"""
+    groupby(f, cs)
+
+Group consecutive values that share the same result of applying `f` into an OrderedDict.
+
+```jldoctest
+julia> cgroupby(x -> x[1], @i2c ["face", "foo", "bar", "book", "baz", "zzz"])
+DataStructures.OrderedDict{Any,Any} with 3 entries:
+  'f' => String["face","foo"]
+  'b' => String["bar","book","baz"]
+  'z' => String["zzz"]
+```
+"""
 cgroupby(f, continuable) = cgroupbyreduce(f, continuable, push!, x -> [x])
 
 
@@ -590,9 +784,41 @@ ccombinations(cont, cs::StoredIterable) = ccombinations(cs...)(cont)
 ccombinations_with_replacement(cont, cs::StoredIterable) = ccombinations_with_replacement(cs...)(cont)
 
 
+"""
+    csubsets(continuable)
+    csubsets(continuable, k)
 
+Iterate over every subset of the collection `xs`. You can restrict the subsets to a specific
+size `k`.
+
+```jldoctest
+julia> csubsets(@i2c [1, 2, 3]) do i
+          @show i
+       end
+i = ()
+i = (1,)
+i = (2,)
+i = (3,)
+i = (2,1)
+i = (3,1)
+i = (3,2)
+i = (3,2,1)
+
+julia> csubsets(crange(4), 2) do i
+          @show i
+       end
+i = (2,1)
+i = (3,1)
+i = (3,2)
+i = (4,1)
+i = (4,2)
+i = (4,3)
+```
+"""
 function csubsets(continuable, k::Integer)
-  if k==1
+  if k==0
+    cont -> cont(())
+  elseif k==1
     cmap(tuple, continuable)
   else
     cs = (continuable, continuable)
@@ -607,7 +833,7 @@ csubsets(cont, continuable, k::Integer) = csubsets(continuable, k)(cont)
 csubsets(continuable) = cont -> begin
 # TODO Discuss: the first n=1000 iterations or something could be done without check_empty which will improve performance for long continuables,
 # while decreasing performance for small continuables of course because of many empty continuations
-  k = 1
+  k = 0
   while true
     empty = check_empty(csubsets(continuable, k))(cont)
     if empty
@@ -627,7 +853,16 @@ csubsets(cont, continuable) = csubsets(continuable)(cont)
 
 ## extract values from continuables  ----------------------------------------
 
+"""
+    cnth(continuable, n)
 
+Return the `n`th element of `continuable`. This is mostly useful for non-indexable collections.
+
+```jldoctest
+julia> cnth(crange(5,10), 3)
+7
+```
+"""
 @Ref function cnth(continuable, n::Integer)
   i = Ref(0)
   ret = @stoppable continuable() do x
@@ -646,6 +881,7 @@ end
 cfirst(continuable) = cnth(continuable, 1)
 csecond(continuable) = cnth(continuable, 2)
 
+import Iterators.nth
 nth(continuable::Function, n::Integer) = cnth(continuable, n)
 import Base.first
 first(continuable::Function) = cfirst(continuable)
@@ -661,7 +897,24 @@ end
 
 
 ## create continuables ----------------------------
+"""
+    crepeatedly(f, n)
 
+Call function `f` `n` times, or infinitely if `n` is omitted.
+
+```julia
+julia> t() = (sleep(0.1); Dates.millisecond(now()))
+t (generic function with 1 method)
+
+julia> collect(crepeatedly(t, 5))
+5-element Array{Any,1}:
+ 993
+  97
+ 200
+ 303
+ 408
+```
+"""
 crepeatedly(f::Function) = cont -> begin
   while true
     cont(f())
@@ -676,11 +929,39 @@ crepeatedly(f::Function, n::Integer) = cont -> begin
 end
 crepeatedly(cont::Function, f::Function, n::Integer) = repeatedly(f, n)(cont)
 
+"""
+    citerate(f, x)
+
+Continue over successive applications of `f`, as in `f(x)`, `f(f(x))`, `f(f(f(x)))`, ....
+
+Use `ctake()` to obtain the required number of elements.
+
+```jldoctest
+julia> ctake(citerate(x -> 2x, 1), 5) do i
+           @show i
+       end
+i = 1
+i = 2
+i = 4
+i = 8
+i = 16
+
+julia> ctake(citerate(sqrt, 100), 6) do i
+           @show i
+       end
+i = 100
+i = 10.0
+i = 3.1622776601683795
+i = 1.7782794100389228
+i = 1.333521432163324
+i = 1.1547819846894583
+```
+"""
 @Ref citerate(f::Function, x) = cont -> begin
   a = Ref(x)
   while true
-    a = f(a)
     cont(a)
+    a = f(a)
   end
 end
 citerate(cont::Function, f::Function, x) = citerate(f, x)(cont)

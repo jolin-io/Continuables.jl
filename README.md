@@ -229,7 +229,7 @@ Similarly the memory usage improves drastically.
 
   zip unfortunately does not work with pure continuables, so we have to either bring things to memory with ``mzip`` or transform things to task using ``tzip``. The result is in any case a continuable again, however implemented by the one or the other method.
 
-# Iterators.jl like higher level functions - Product, GroupByReduce, Zip, ...
+# Iterators.jl like higher level functions - product, groupby, subsets, ...
 
 - **repeatedly**(f, [n])
 

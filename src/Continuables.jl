@@ -48,7 +48,7 @@ export
   FRef, crange, ccollect, @c2a, astask, @c2t, ascontinuable, @i2c, stoppable, stop, @stoppable,
   cconst, cmap, cfilter, creduce, creduce!, mzip, tzip, cproduct, chain, ccycle,
   ctake, ctakewhile, cdrop, cdropwhile, cflatten, cpartition, cgroupbyreduce,
-  cgroupby, cnth, ccount, crepeatedly, citerate, @Ref, FRef, MRef, ARef, cenumerate, ccombinations,
+  cgroupby, cdistinct, cnth, ccount, crepeatedly, citerate, @Ref, FRef, MRef, ARef, cenumerate, ccombinations,
   csubsets, check_empty, memoize, nth, second
 
 ## Core functions --------------------------------------------------
@@ -284,6 +284,17 @@ import Base.reduce
 reduce(op, v0, continuable::Function) = creduce(op, v0, continuable)
 
 
+cdistinct(continuable) = cont -> begin
+  s = Set()
+  continuable() do x
+    if x ∉ s
+      cont(x)
+      push!(s, x)
+    end
+  end
+end
+
+cdistinct(cont, continuable) = cdistinct(continuable)(cont)
 
 
 ## zip ----------------------------

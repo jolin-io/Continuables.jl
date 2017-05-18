@@ -3,9 +3,9 @@ Continuables are generator-like higher-order functions which take a continuation
 
 This package implements all standard helpers like ``Iterators.jl`` implemented them for iterators. See further below for examples how these helpers work in the context of continuables. You can also look at the description of [Iterators.jl](https://github.com/JuliaCollections/Iterators.jl).
 
-## Installation
+# Installation
 
-Install this package with 
+Install this package with
 ```julia
 julia> Pkg.clone("https://github.com/schlichtanders/Continuables.jl")
 ```

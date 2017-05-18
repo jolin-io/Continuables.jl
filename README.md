@@ -1,7 +1,10 @@
 # Continuables
 Continuables are generator-like higher-order functions which take a continuation as an extra argument. It is best to think of the continuation function in the sense of ``produce`` from Julia's Tasks. Continuables can be used instead of Tasks in many place with drastic performance-improvements.
+Thanks to Julia's ``do`` syntax, code with Continuables looks very similar to classical ``for``-loops. See below for examples.
 
 This package implements all standard helpers like ``Iterators.jl`` implemented them for iterators. See further below for examples how these helpers work in the context of continuables. You can also look at the description of [Iterators.jl](https://github.com/JuliaCollections/Iterators.jl).
+
+Like Iterators.jl, Continuables work pretty well together with [Pipe.jl](https://github.com/oxinabox/Pipe.jl).
 
 # Installation
 
@@ -228,6 +231,14 @@ Similarly the memory usage improves drastically.
 - **mzip**, **tzip**
 
   zip unfortunately does not work with pure continuables, so we have to either bring things to memory with ``mzip`` or transform things to task using ``tzip``. The result is in any case a continuable again, however implemented by the one or the other method.
+
+- **first(continuable)**, **second(continuable)**
+
+  get the first or second element of a continuable.
+
+- **ctakewhile**, **cdrop**, **cdropwhile**
+
+  common alternatives to ``take`` function.
 
 # Iterators.jl like higher level functions - product, groupby, subsets, ...
 

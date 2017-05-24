@@ -40,7 +40,6 @@ https://github.com/JuliaCollections/Iterators.jl/blob/master/src/Iterators.jl.
 # E.g. a = [2.1, 2]; eltype(map(x->x, a[1:0]))
 
 
-
 ## module start
 
 module Continuables
@@ -49,7 +48,7 @@ export
   cconst, cmap, cfilter, creduce, creduce!, mzip, tzip, cproduct, cchain, ccycle,
   ctake, ctakewhile, cdrop, cdropwhile, cflatten, cpartition, cgroupbyreduce,
   cgroupby, cdistinct, cnth, ccount, crepeatedly, citerate, @Ref, FRef, MRef, ARef, cenumerate, ccombinations,
-  csubsets, check_empty, memoize, nth, second
+  csubsets, check_empty, memoize, nth, second, cslices, csuppress, csuppress_inner, csuppress_outer
 
 ## Core functions --------------------------------------------------
 
@@ -162,6 +161,7 @@ end
 c2a = ccollect
 c2t = astask
 i2c = ascontinuable
+traverse = ascontinuable
 
 macro c2a(expr)
   :(ccollect($expr))
@@ -270,8 +270,10 @@ i = 100
 cmap(func, continuable) = cont -> begin
   continuable(x -> cont(func(x)))
 end
-
 cmap(cont, func, continuable) = cmap(func, continuable)(cont)
+
+import Base.map
+map(func, continuable::Function) = cmap(func, continuable)
 
 cfilter(bool, continuable) = cont -> begin
   continuable() do x
@@ -280,8 +282,10 @@ cfilter(bool, continuable) = cont -> begin
     end
   end
 end
-
 cfilter(cont, bool, continuable) = cfilter(bool, continuable)(cont)
+
+import Base.filter
+filter(func, continuable::Function) = cfilter(func, continuable)
 
 @Ref function creduce{T}(op, v0::T, continuable)
   # we have to use always mutable Ref here, Ref(array) is unfortunately not mutable,
@@ -1008,5 +1012,72 @@ memoize(continuable, n::Integer, T=Any) = @Ref begin
   end
 end
 
+
+## Extra functionalities
+
+# Code taken from https://github.com/JuliaLang/julia/blob/2001c26a434021b691e39a8720114fb341d5ef4f/base/abstractarray.jl
+# defined the other way around to match mapslices
+cslices(cont, A::AbstractArray, dims) = cslices(cont, A, [dims...])
+function cslices(cont, A::AbstractArray, dims::AbstractVector)
+    if isempty(dims)
+        return cmap(f,A)
+    end
+
+    dimsA = [indices(A)...]
+    ndimsA = ndims(A)
+    otherdims = setdiff([1:ndimsA;], dims)
+    itershape = tuple(dimsA[otherdims]...)
+
+    idx = Vector(ndimsA)  # Any[first(ind) for ind in indices(A)]
+    for d in dims
+        idx[d] = Colon()
+    end
+
+    ndimsO = length(otherdims)
+    for I in CartesianRange(itershape)
+        for i in 1:ndimsO
+            idx[otherdims[i]] = I.I[i]
+        end
+        cont(A[idx...])
+    end
+end
+cslices(A::AbstractArray, dims) = cont -> cslices(cont, A, dims)
+
+
+csuppress(cont, exctype::Type=Exception) = x -> begin
+  try
+    cont(x)
+  catch exc
+    if !isa(exc, exctype)
+      rethrow()
+    end
+  end
+end
+csuppress(exctype::Type=Exception) = cont -> csuppress(cont, exctype)
+
+
+csuppress_inner(continuable, exctype::Type=Exception) = cont -> begin
+  continuable() do x
+    try
+      cont(x)
+    catch exc
+      if !isa(exc, exctype)
+        rethrow()
+      end
+    end
+  end
+end
+csuppress_inner(cont, continuable, exctype::Type=Exception) = csuppress_inner(continuable, exctype)(cont)
+
+csuppress_outer(continuable, exctype::Type) = cont -> begin
+  try
+    continuable(cont)
+  catch exc
+    if !isa(exc, exctype)
+      rethrow()
+    end
+  end
+end
+csuppress_outer(cont, continuable, exctype::Type=Exception) = csuppress_outer(continuable, exctype)(cont)
 
 end  # module

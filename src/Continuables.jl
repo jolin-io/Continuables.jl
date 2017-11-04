@@ -76,10 +76,10 @@ function extract_symbol(a)
 end
 
 macro cont(expr::Expr)
-  @assert expr.head ∈ [:(=), :function]  "@cont works only with functions"
+  expr = macroexpand(expr)  # for sub macros like @Ref and to simplify what this macro has to do
+  @assert expr.head ∈ (:(=), :function)  "@cont works only with functions"
   signature = expr.args[1]
   @assert isa(signature, Expr) && signature.head == :call "we need called function syntax"
-  refify!(expr)  # include refify by default
 
   functioncall = Expr(:call, signature.args[1], extract_symbol.(signature.args[2:end])...)
   newfunc = if functioncall.args[2] == :cont
@@ -90,27 +90,24 @@ macro cont(expr::Expr)
     Expr(:(=), newsignature, :($functioncall(cont)))
   end
 
+  # we need to mark one expression as the target for documentation, otherwise every doc string will throw an error
   esc(quote
-    $expr
+    @Base.__doc__ $expr
     $newfunc
   end)
 end
 
 typealias StoredIterable Union{Tuple, AbstractArray}
 
-crange(first, step, last) = cont -> begin
+@cont function crange(cont, first, step, last)
   for i in first:step:last
     cont(i)
   end
 end
-
 crange(last) = crange(1, 1, last)
+crange(cont::Function, last) = crange(cont, 1, 1, last)
 crange(first, last) = crange(first, 1, last)
-
-crange(cont::Function, last) = crange(last)(cont)
-crange(cont::Function, first, last) = crange(first, last)(cont)
-crange(cont::Function, first, step, last) = crange(first, step, last)(cont)
-
+crange(cont::Function, first, last) = crange(cont, first, 1, last)
 
 ccollect(continuable) = creduce!(push!, [], continuable)
 import Base.collect
@@ -130,7 +127,7 @@ end
 
 astask(continuable) = @task continuable(produce)
 
-ascontinuable(iterable) = cont -> begin
+@cont function ascontinuable(cont, iterable)
   for i in iterable
     cont(i)
   end
@@ -138,15 +135,15 @@ end
 
 
 macro c2a(expr)
-  :(ccollect($expr))
+  esc(:(ccollect($expr)))
 end
 
 macro c2t(expr)
-  :(astask($expr))
+  esc(:(astask($expr)))
 end
 
 macro i2c(expr)
-  :(ascontinuable($expr))
+  esc(:(ascontinuable($expr)))
 end
 
 
@@ -170,33 +167,28 @@ end
 stoppable(cont, continuable) = stoppable(continuable)(cont)
 
 
-cconst(value) = cont -> cont(value)
+@cont cconst(cont, value) = cont(value)
 
 ## core functional helpers ----------------------------------------------------------
-cenumerate(continuable) = cont -> @Ref begin
+@cont @Ref function cenumerate(cont, continuable)
   i = Ref(1)
   continuable() do x
     cont((i, x))
     i += 1
   end
 end
-cenumerate(cont, continuable) = cenumerate(continuable)(cont)
 
-cmap(func, continuable) = cont -> begin
+@cont function cmap(cont, func, continuable)
   continuable(x -> cont(func(x)))
 end
 
-cmap(cont, func, continuable) = cmap(func, continuable)(cont)
-
-cfilter(bool, continuable) = cont -> begin
+@cont function cfilter(cont, bool, continuable)
   continuable() do x
     if bool(x)
       cont(x)
     end
   end
 end
-
-cfilter(cont, bool, continuable) = cfilter(bool, continuable)(cont)
 
 @Ref function creduce(op, v0, continuable)
   acc = Ref(v0)
@@ -275,7 +267,7 @@ end
   acc
 end
 
-cproduct(cont::Function, cs::StoredIterable) = cproduct(cs...)(cont)
+cproduct_do(cont, cs...) = cproduct(cs...)(cont)
 
 
 chain(cs::Function...) = cont -> begin
@@ -283,28 +275,26 @@ chain(cs::Function...) = cont -> begin
     continuable(cont)
   end
 end
-chain(cont::Function, cs::StoredIterable) = chain(cs...)(cont)
+chain_do(cont, cs...) = chain(cs...)(cont)
 
 
-ccycle(continuable::Function) = cont -> begin
+@cont function ccycle(cont, continuable)
   while true
     continuable(cont)
   end
 end
-ccycle(cont::Function, continuable::Function) = ccylce(continuable)(cont)
 
-ccycle(continuable::Function, n::Integer) = cont -> begin
+@cont function ccycle(cont, continuable, n::Integer)
   for _ in 1:n
     continuable(cont)
   end
 end
-ccycle(cont::Function, continuable::Function, n::Integer) = ccylce(continuable, n)(cont)
 
 
 # --------------------------
 
 # generic cmap? only with zip and this is not efficient unfortunately
-ctake(continuable::Function, n::Integer) = cont -> @Ref begin
+@cont @Ref function ctake(cont, continuable, n::Integer)
   i = Ref(0)
   stoppable(continuable) do x
     i += 1
@@ -314,9 +304,8 @@ ctake(continuable::Function, n::Integer) = cont -> @Ref begin
     cont(x)
   end
 end
-ctake(cont::Function, continuable::Function, n::Integer) = ctake(continuable, n)(cont)
 
-ctakewhile(continuable::Function, bool::Function) = cont -> begin
+@cont function ctakewhile(cont, continuable, bool)
   stoppable(continuable) do x
     if !bool(x)
       stop()
@@ -324,10 +313,8 @@ ctakewhile(continuable::Function, bool::Function) = cont -> begin
     cont(x)
   end
 end
-ctakewhile(cont, continuable, bool) = ctakewhile(continuable, bool)(cont)
 
-
-cdrop(continuable::Function, n::Integer) = cont -> @Ref begin
+@cont @Ref function cdrop(cont, continuable, n::Integer)
   i = Ref(0)
   continuable() do x
     i += 1
@@ -336,9 +323,8 @@ cdrop(continuable::Function, n::Integer) = cont -> @Ref begin
     end
   end
 end
-cdrop(cont, continuable, n::Integer) = cdrop(continuable, n)(cont)
 
-cdropwhile(continuable::Function, bool::Function) = cont -> @Ref begin
+@cont @Ref function cdropwhile(cont, continuable, bool)
   dropping = Ref(true)
   continuable() do x
     if dropping
@@ -350,25 +336,20 @@ cdropwhile(continuable::Function, bool::Function) = cont -> @Ref begin
     end
   end
 end
-cdropwhile(cont, continuable, bool::Function) = cdropwhile(continuable, bool)(cont)
 
-
-cflatten(iterable) = cont -> begin
+@cont function cflatten(cont, iterable)
   for continuable in iterable
     continuable(cont)
   end
 end
 
-cflatten(continuable::Function) = cont -> begin
+@cont function cflatten(cont, continuable::Function)
   continuable() do subcontinuable
     subcontinuable(cont)
   end
 end
 
-cflatten(cont, iterable) = cflatten(iterable)(cont)
-
-
-cpartition(continuable, n::Integer) = cont -> @Ref begin
+@cont @Ref function cpartition(cont, continuable, n::Integer)
   i = Ref(1)
   part = Ref(Vector(n))
   continuable() do x
@@ -385,10 +366,8 @@ cpartition(continuable, n::Integer) = cont -> @Ref begin
     cont(part)
   end
 end
-cpartition(cont, continuable, n::Integer) = cpartition(continuable, n)(cont)
 
-
-cpartition(continuable, n::Integer, step::Integer) = cont -> @Ref begin
+@cont @Ref function cpartition(cont, continuable, n::Integer, step::Integer)
   i = Ref(0)
   n_overlap = n - step
   part = Ref(Vector(n))  # TODO get element-type from function return type
@@ -412,7 +391,6 @@ cpartition(continuable, n::Integer, step::Integer) = cont -> @Ref begin
   end
 end
 
-cpartition(cont, continuable, n::Integer, step::Integer) = cpartition(continuable, n, step)(cont)
 
 # the interface is different from Itertools.jl
 # we directly return an OrderedDictionary instead of a iterable of values only
@@ -467,27 +445,24 @@ end
 
 ## create continuables ----------------------------
 
-crepeatedly(f::Function) = cont -> begin
+@cont function crepeatedly(cont, f)
   while true
     cont(f())
   end
 end
-crepeatedly(cont::Function, f::Function) = crepeatedly(f)(cont)
 
-crepeatedly(f::Function, n::Integer) = cont -> begin
+@cont function crepeatedly(cont, f, n::Integer)
   for _ in 1:n
     cont(f())
   end
 end
-crepeatedly(cont::Function, f::Function, n::Integer) = repeatedly(f, n)(cont)
 
-@Ref citerate(f::Function, x) = cont -> begin
+@cont @Ref function citerate(cont, f, x)
   a = Ref(x)
   while true
     a = f(a)
     cont(a)
   end
 end
-citerate(cont::Function, f::Function, x) = citerate(f, x)(cont)
 
 end  # module

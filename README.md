@@ -81,8 +81,7 @@ end
   end
 end
 ```
-As within a continuation you might want to use Refs, this macro automatically includes the `@Ref` macro.
-
+This can be combined with `@Ref` like `@cont @Ref function f(a) ... end`
 
 # Benchmark
 

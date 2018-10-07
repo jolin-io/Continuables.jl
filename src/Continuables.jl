@@ -33,7 +33,6 @@ export
 # we use Julia's default Ref type for single variable references
 
 function refify!(expr::Expr, Refs::Vector{Symbol}=Vector{Symbol}())
-  @show expr
   expr.head == :. && return  # short cycle if we have a dot access expression, as we don't want to change in there
 
   for (i, a) in enumerate(expr.args)
@@ -43,9 +42,6 @@ function refify!(expr::Expr, Refs::Vector{Symbol}=Vector{Symbol}())
 
     else
       substituted = false
-
-      @show a
-      @show Refs
 
       for r in Refs
         if a == r

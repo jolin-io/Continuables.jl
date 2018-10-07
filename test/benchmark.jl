@@ -1,4 +1,4 @@
-using Iterators
+using IterTools
 using Continuables
 import BenchmarkTools.@benchmark
 
@@ -154,7 +154,7 @@ BenchmarkTools.Trial:
   --------------
   samples:          2495
   evals/sample:     1
-  
+
 julia> @benchmark reduce(
          (acc, t) -> broadcast(+, acc, t),
          [0;0;0],

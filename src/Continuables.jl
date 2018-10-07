@@ -76,7 +76,7 @@ function extract_symbol(a)
 end
 
 macro cont(expr::Expr)
-  expr = macroexpand(expr)  # for sub macros like @Ref and to simplify what this macro has to do
+  expr = macroexpand(__module__, expr)  # for sub macros like @Ref and to simplify what this macro has to do
   @assert expr.head ∈ (:(=), :function)  "@cont works only with functions"
   signature = expr.args[1]
   @assert isa(signature, Expr) && signature.head == :call "we need called function syntax"
@@ -97,7 +97,7 @@ macro cont(expr::Expr)
   end)
 end
 
-typealias StoredIterable Union{Tuple, AbstractArray}
+const StoredIterable = Union{Tuple, AbstractArray}
 
 @cont function crange(cont, first, step, last)
   for i in first:step:last
@@ -147,7 +147,7 @@ macro i2c(expr)
 end
 
 
-type StopException{T} <: Exception
+struct StopException{T} <: Exception
   ret::T
 end
 Stop = StopException(nothing)

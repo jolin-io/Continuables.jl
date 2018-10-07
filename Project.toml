@@ -1,0 +1,6 @@
+authors = ["Sahm Stephan <s.sahm@reply.de>"]
+name = "Continuables"
+uuid = "79afa230-ca09-11e8-120b-5decf7bf5e25"
+version = "0.1.0"
+
+[deps]

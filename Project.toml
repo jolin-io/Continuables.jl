@@ -1,7 +1,7 @@
 name = "Continuables"
 uuid = "79afa230-ca09-11e8-120b-5decf7bf5e25"
 authors = ["Sahm Stephan <s.sahm@reply.de>"]
-version = "0.2.0"
+version = "0.2.1"
 
 [deps]
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"

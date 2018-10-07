@@ -30,18 +30,17 @@ ccollect(cpartition(crange(20), 3, 5))
 
 
 
-naturalnumbers(start=1, step=1) = cont -> begin
+@cont naturalnumbers(start=1, step=1) = cont -> begin
   i = start
   while true
     cont(i)
     i += step
   end
 end
-naturalnumbers(cont::Function, start=1, step=1) = naturalnumbers(start, step)(cont)
 
 
 
-for i in range(10)
+for i in range(1, stop=10)
   println(i)
 end
 
@@ -78,15 +77,15 @@ end
 
 
 import BenchmarkTools.@benchmark
+using Continuables
 
-
-crange(n::Int) = cont -> begin
-  for i in 1:n
-    cont(i)
-  end
-end
-
-crange(cont, n::Int) = crange(n)(cont)
+# crange(n::Int) = cont -> begin
+#   for i in 1:n
+#     cont(i)
+#   end
+# end
+#
+# crange(cont, n::Int) = crange(n)(cont)
 
 function trange(n::Int)
   c = Channel{Int}(1)
@@ -140,7 +139,7 @@ end
 
 @benchmark sum_continuable(crange(1000))
 @benchmark sum_continuable_withoutref(crange(1000))
-@benchmark sum_iterable(@task trange(1000))
+@benchmark sum_iterable(trange(1000))
 @benchmark sum_iterable(1:1000)
 
 @benchmark collect_continuable(crange(1000))

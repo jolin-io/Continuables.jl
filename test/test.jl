@@ -41,8 +41,9 @@ naturalnumbers(cont::Function, start=1, step=1) = naturalnumbers(start, step)(co
 
 
 
-for i in range(10):
+for i in range(10)
   println(i)
+end
 
 function f()
   a = 22
@@ -65,7 +66,7 @@ f()
 
 
 
-macroexpand(:(@Ref begin
+@macroexpand @Ref begin
   a = Ref(1)
   b = 4
   c = Ref(4)
@@ -73,25 +74,28 @@ macroexpand(:(@Ref begin
     a += 1
   end
   a + b + c
-end))
+end
 
 
 import BenchmarkTools.@benchmark
 
 
-crange(n::Integer) = cont -> begin
+crange(n::Int) = cont -> begin
   for i in 1:n
     cont(i)
   end
 end
 
-crange(cont, n::Integer) = crange(n)(cont)
+crange(cont, n::Int) = crange(n)(cont)
 
-function trange(n::Integer)
-  for i in 1:n
-    produce(i)
+function trange(n::Int)
+  c = Channel{Int}(1)
+  task = @async for i ∈ 1:n
+    put!(c, i)
   end
+  bind(c, task)
 end
+
 
 
 @Ref function sum_continuable(continuable)
@@ -141,4 +145,4 @@ end
 
 @benchmark collect_continuable(crange(1000))
 @benchmark collect_iterable(1:1000)
-@benchmark collect_iterable(@task trange(1000))
+@benchmark collect_iterable(trange(1000))

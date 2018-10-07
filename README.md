@@ -1,13 +1,13 @@
 # Continuables
 
-Continuables are generator-like higher-order functions which take a continuation as an extra argument. It is best to think of the continuation function in the sense of ``produce`` from Julia's Tasks. Continuables can be used instead of Tasks in many place with drastic performance-improvements.
+Continuables are generator-like higher-order functions which take a continuation as an extra argument. It is best to think of the continuation function in the sense of ``yield`` from Python's Generators, or ``put!`` from Julia's Channel object (however ``put!`` has no return argument). Continuables can be used instead of Channels in many place with drastic performance-improvements.
 
-This package implements all standard helpers like ``Iterators.jl`` implemented them for iterators. See further below for examples how these helpers work in the context of continuables. You can also look at the description of [Iterators.jl](https://github.com/JuliaCollections/Iterators.jl).
+This package implements all standard helpers like ``IterTools.jl`` implemented them for iterators. See further below for examples how these helpers work in the context of Continuables. You can also look at the description of [IterTools.jl](https://github.com/JuliaCollections/Iterators.jl).
 
 # Example of a Continuable
 
-Consider the following to trivial wrappers around a range iterator 1:n.
-The first one is the continuable version, the second the Task version.
+Consider the following two trivial wrappers around a range iterator 1:n.
+The first one is the continuable version, the second the Channel version.
 
 ```julia
 # Continuable ---------------------------------------------
@@ -21,10 +21,13 @@ end
 crange(cont, n::Integer) = crange(n)(cont)
 
 # Task -----------------------------------------------------
-function trange(n::Integer)
-  for i in 1:n
-    produce(i)
+
+function trange(r)
+  c = Channel{Int}(1)
+  task = @async for i ∈ 1:r
+    put!(c, i)
   end
+  bind(c, task)
 end
 ```
 
@@ -131,7 +134,7 @@ BenchmarkTools.Trial:
 ```
 Last but not least the task version of range.
 ```julia
-julia> @benchmark sum_iterable(@task trange(1000))
+julia> @benchmark sum_iterable(trange(1000))
 BenchmarkTools.Trial:
   memory estimate:  33.13 KiB
   allocs estimate:  1949
@@ -159,4 +162,8 @@ Similarly the memory usage improves drastically.
 
 # Product, GroupByReduce, Zip, ...
 
-TODO mimic https://github.com/JuliaCollections/Iterators.jl
+IterTools.jl is mimicked in this package for Continuables, please take a look at the functions provided by this package for more details.
+
+
+# compare with ResumableFunctions.jl
+https://github.com/BenLauwens/ResumableFunctions.jl

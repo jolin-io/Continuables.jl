@@ -4,4 +4,5 @@ authors = ["Sahm Stephan <s.sahm@reply.de>"]
 version = "0.2.1"
 
 [deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"

@@ -1,4 +1,4 @@
-using IterTools
+# using Base.Iterators
 using Continuables
 import BenchmarkTools.@benchmark
 
@@ -39,10 +39,9 @@ BenchmarkTools.Trial:
 ## product -------------------------------------------------------------
 
 @benchmark reduce(
-  (acc, t) -> broadcast(+, acc, t),  # tuple1 .+ tuple2 does not work in julia 5 unfortunately
+  (acc, t) -> acc .+ t,
   (0,0,0),
-  cproduct(crange(100), crange(100), crange(100))
-)
+  product(@i2c 1:100, @i2c 1:100, @i2c 1:100))
 #=
 julia> @benchmark reduce(
          (acc, t) -> broadcast(+, acc, t),  # tuple1 .+ tuple2 does not work in julia 5 unfortunately
@@ -82,93 +81,5 @@ BenchmarkTools.Trial:
   maximum time:     1.361 s (2.94% GC)
   --------------
   samples:          4
-  evals/sample:     1
-=#
-
-## subsets -------------------------------------------------------------
-
-@benchmark reduce(
-  (acc, t) -> broadcast(+, acc, t),
-  (0,0,0),
-  csubsets(crange(1000), 3)
-)
-#=
-julia> @benchmark reduce(
-         (acc, t) -> broadcast(+, acc, t),
-         (0,0,0),
-         csubsets(crange(100), 3)
-       )
-BenchmarkTools.Trial:
-  memory estimate:  30.31 MiB
-  allocs estimate:  1480353
-  --------------
-  minimum time:     91.652 ms (1.60% GC)
-  median time:      97.805 ms (1.83% GC)
-  mean time:        106.574 ms (2.06% GC)
-  maximum time:     157.497 ms (2.37% GC)
-  --------------
-  samples:          47
-  evals/sample:     1
-=#
-
-
-@benchmark reduce(
-  (acc, t) -> broadcast(+, acc, t),
-  [0;0;0],
-  subsets(1:1000, 3)
-)
-#=
-julia> @benchmark reduce(
-         (acc, t) -> broadcast(+, acc, t),
-         [0;0;0],
-         subsets(1:100, 3)
-       )
-BenchmarkTools.Trial:
-  memory estimate:  46.88 MiB
-  allocs estimate:  808506
-  --------------
-  minimum time:     21.589 ms (11.63% GC)
-  median time:      26.535 ms (11.27% GC)
-  mean time:        28.475 ms (11.36% GC)
-  maximum time:     46.955 ms (9.24% GC)
-  --------------
-  samples:          176
-  evals/sample:     1
-=#
-
-
-#=
-julia> @benchmark reduce(
-         (acc, t) -> broadcast(+, acc, t),
-         (0,0,0),
-         @pipe crange(100000) |> csubsets(_,3) |> ctake(_,1000)
-       )
-BenchmarkTools.Trial:
-  memory estimate:  234.28 KiB
-  allocs estimate:  10115
-  --------------
-  minimum time:     1.771 ms (0.00% GC)
-  median time:      1.791 ms (0.00% GC)
-  mean time:        1.994 ms (1.31% GC)
-  maximum time:     7.165 ms (54.19% GC)
-  --------------
-  samples:          2495
-  evals/sample:     1
-
-julia> @benchmark reduce(
-         (acc, t) -> broadcast(+, acc, t),
-         [0;0;0],
-         @pipe 1:100000 |> subsets(_, 3) |> take(_, 1000)
-       )
-BenchmarkTools.Trial:
-  memory estimate:  1.08 MiB
-  allocs estimate:  6009
-  --------------
-  minimum time:     167.506 μs (0.00% GC)
-  median time:      208.593 μs (0.00% GC)
-  mean time:        289.321 μs (18.91% GC)
-  maximum time:     3.510 ms (90.11% GC)
-  --------------
-  samples:          10000
   evals/sample:     1
 =#

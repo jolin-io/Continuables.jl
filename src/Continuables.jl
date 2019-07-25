@@ -23,129 +23,99 @@ https://github.com/JuliaCollections/Iterators.jl/blob/master/src/Iterators.jl.
 # TODO copy documentation strings
 module Continuables
 export
-  crange, ccollect, @c2a, astask, @c2t, ascontinuable, @i2c, stoppable, stop,
-  cconst, cmap, cfilter, creduce, mzip, tzip, cproduct, chain, ccycle,
-  ctake, ctakewhile, cdrop, cdropwhile, cflatten, cpartition, cgroupbyreduce,
-  cgroupby, cnth, ccount, crepeatedly, citerate, Ref, @Ref, @cont, cenumerate
+  singleton,
+  astask, ascontinuable, @i2c, stoppable, stop, 
+  reduce!, azip, tzip, product, chain, flatten, cycle, 
+  take, takewhile, drop, dropwhile, partition, groupbyreduce, groupby,
+  nth, @Ref, @cont
+
+"""
+``cont`` is reserved function parameter name
+"""
+cont(args...; kwargs...) = error("``cont`` is a reserved function parameter name")
+
+# we decided to have an extra type to reuse existing function knowhow by properly dispatching
+"""
+  Continuable(func)
+
+Assumes func to have a single argument, the continuation function (usually named `cont`).
+"""
+struct Continuable{Elem, Func, Length <: Union{Nothing, Integer, Base.IsInfinite}, Size <: Union{Nothing, Tuple{Vararg{Integer}}}}  # TODO add Length information like in the Iterable interface as typeparameters
+  f::Func
+  length::Length
+  size::Size
+  function Continuable{Elem}(func::Func; length=nothing, size=nothing) where {Elem, Func}
+    new{Elem, Func, typeof(length), typeof(size)}(f, length, size)
+  end
+end
+Continuable(f; kwargs...) = Continuable{Any}(f; kwargs...)
+(c::Continuable)(cont) = c.f(cont)
+
+include("./syntax.jl")  # some require the Continuable definition, hence here
+
+const length = Base.length
+length(c::Continuable{Elem, Length, Size}) where {Elem, Length <: Nothing, Size <: Tuple} = prod(c.size)
+length(c::Continuable{Elem, Length}) where {Elem, Length <: Integer} = c.length
+@Ref function length(continuable::Continuable)
+  i = Ref(0)
+  continuable() do _
+    i += 1
+  end
+  i
+end
+
+Base.eltype(::Continuable{Elem}) where Elem = Elem
+
+# Continuable cannot implement Base.iterate
+# TODO does it make sense to implement Iterator Interface then?
+Base.IteratorSize(::Continuable{Elem, Length, Size, Func}) where {Elem, Length <: Nothing, Size <: Nothing, Func} = Base.SizeUnknown()
+Base.IteratorSize(::Continuable{Elem, Length, Size, Func}) where {Elem, Length <: Integer, Size <: Nothing, Func} = Base.HasLength()
+Base.IteratorSize(::Continuable{Elem, Length, Size, Func}) where {Elem, Length <: Base.IsInfinite, Size <: Nothing, Func} = Base.IsInfinite()
+Base.IteratorSize(::Continuable{Elem, Length, Size, Func}) where {Elem, Length, Size <: Tuple, Func} = Base.HasShape{length(Size.parameters)}()
+Base.IteratorSize(::Continuable{Elem, Length, Size, Func}) where {Elem, Length, Size <: Tuple, Func} = Base.HasShape{length(Size.parameters)}()
+Base.IteratorEltype(::Continuable{Any}) = Base.EltypeUnknown()
+
+
+## Core Transformations ----------------------------------------
 
 ## Core functions --------------------------------------------------
 
-# we use Julia's default Ref type for single variable references
-
-function refify!(expr::Expr, Refs::Vector{Symbol}=Vector{Symbol}())
-  expr.head == :. && return  # short cycle if we have a dot access expression, as we don't want to change in there
-
-  for (i, a) in enumerate(expr.args)
-    if (isa(a, Expr) && a.head == :(=) && isa(a.args[1], Symbol)
-        && isa(a.args[2], Expr) && a.args[2].args[1] == :Ref && a.args[2].head == :call)
-      push!(Refs, a.args[1])
-
-    else
-      substituted = false
-
-      for r in Refs
-        if a == r
-          expr.args[i] = :($r.x)
-          substituted = true
-          break
-        end
-      end
-
-      if !substituted
-        refify!(a, Refs)
-      end
-    end
-  end
+const collect = Base.collect
+function collect(c::Continuable{Elem, <:Integer, Nothing}) where Elem
+  collect(c, length(c))
+end
+function collect(c::Continuable{Elem, <:Any, <:Tuple}) where Elem
+  array = collect(c, length(c))
+  reshape(array, size(c))
+end
+function collect(c::Continuable{Elem}) where Elem
+  everything = Vector{Elem}()
+  reduce!(push!, c, init = everything)
 end
 
-refify!(s, ::Vector{Symbol}) = ()  # if there is no expression, we cannot refify anything
-
-macro Ref(expr)
-  refify!(expr)
-  esc(expr)
-end
-
-function extract_symbol(a)
-  if isa(a, Symbol)
-    a
-  elseif isa(a.args[1], Symbol) # something like Type annotation a::Any or Defaultvalue b = 3
-    a.args[1]
-  else # Type annotation with Defaultvalue
-    a.args[1].args[1]
-  end
-end
-
-macro cont(expr::Expr)
-  expr = macroexpand(__module__, expr)  # for sub macros like @Ref and to simplify what this macro has to do
-  @assert expr.head ∈ (:(=), :function)  "@cont works only with functions"
-  signature = expr.args[1]
-  @assert isa(signature, Expr) && signature.head == :call "we need called function syntax"
-
-  functioncall = Expr(:call, signature.args[1], extract_symbol.(signature.args[2:end])...)
-  newfunc = if functioncall.args[2] == :cont
-    newsignature = Expr(signature.head, signature.args[1], signature.args[3:end]...)
-    Expr(:(=), newsignature, :(cont -> $functioncall))
-  else
-    newsignature = Expr(:call, signature.args[1], :cont, signature.args[2:end]...)
-    Expr(:(=), newsignature, :($functioncall(cont)))
-  end
-
-  # we need to mark one expression as the target for documentation, otherwise every doc string will throw an error
-  esc(quote
-    @Base.__doc__ $expr
-    $newfunc
-  end)
-end
-
-const StoredIterable = Union{Tuple, AbstractArray}
-
-@cont function crange(cont, first, step, last)
-  for i in first:step:last
-    cont(i)
-  end
-end
-crange(last) = crange(1, 1, last)
-crange(cont::Function, last) = crange(cont, 1, 1, last)
-crange(first, last) = crange(first, 1, last)
-crange(cont::Function, first, last) = crange(cont, first, 1, last)
-
-ccollect(continuable) = creduce!(push!, [], continuable)
-import Base.collect
-collect(continuable::Function) = ccollect(continuable)
-
-@Ref function ccollect(continuable, n)
-  a = Vector(n)
+@Ref function collect(c::Continuable{Elem}, n) where Elem
+  a = Vector{Elem}(n)
   # unfortunately the nested call of enumerate results in slower code, hence we have a manual index here
   # this is so drastically that for small n this preallocate version with enumerate would be slower than the non-preallocate version
   i = Ref(1)
-  continuable() do x
+  c() do x
     a[i] = x
     i += 1
   end
   a
 end
 
+# TODO udpate
 astask(continuable) = @task continuable(produce)
 
-@cont function ascontinuable(cont, iterable)
-  for i in iterable
-    cont(i)
-  end
-end
-
-
-macro c2a(expr)
-  esc(:(ccollect($expr)))
-end
-
-macro c2t(expr)
-  esc(:(astask($expr)))
-end
-
+ascontinuable(iterable) = @cont foreach(cont, iterable)
 macro i2c(expr)
   esc(:(ascontinuable($expr)))
 end
 
+singleton(value) = @cont cont(value)
+
+# We realise early stopping via exceptions
 
 struct StopException{T} <: Exception
   ret::T
@@ -154,7 +124,7 @@ Stop = StopException(nothing)
 stop() = throw(Stop)
 stop(ret) = throw(StopException(ret))
 
-stoppable(continuable) = cont -> begin
+stoppable(continuable::Continuable) = @cont begin
   try
     continuable(cont)
   catch exc
@@ -164,13 +134,13 @@ stoppable(continuable) = cont -> begin
     return exc.ret
   end
 end
-stoppable(cont, continuable) = stoppable(continuable)(cont)
 
-
-@cont cconst(cont, value) = cont(value)
 
 ## core functional helpers ----------------------------------------------------------
-@cont @Ref function cenumerate(cont, continuable)
+
+const enumerate = Base.enumerate
+
+@cont @Ref function enumerate(continuable::Continuable)
   i = Ref(1)
   continuable() do x
     cont((i, x))
@@ -178,11 +148,11 @@ stoppable(cont, continuable) = stoppable(continuable)(cont)
   end
 end
 
-@cont function cmap(cont, func, continuable)
-  continuable(x -> cont(func(x)))
-end
+const map = Base.map
+map(func, continuable::Continuable) = @cont continuable(x -> cont(func(x)))
 
-@cont function cfilter(cont, bool, continuable)
+const filter = Base.filter
+@cont function filter(bool, continuable::Continuable)
   continuable() do x
     if bool(x)
       cont(x)
@@ -190,15 +160,28 @@ end
   end
 end
 
-@Ref function creduce(op, v0, continuable)
-  acc = Ref(v0)
+const reduce = Base.reduce
+reduce(op, continuable::Continuable; init = nothing) = reduce_continuable(op, continuable, init)
+
+struct EmptyStart end
+@Ref function reduce_continuable(op, continuable, init::Nothing)
+  acc = Ref{Any}(EmptyStart())
+  lifted_op(acc::EmptyStart, x) = x
+  lifted_op(acc, x) = op(acc, x)
+  continuable() do x
+    acc = lifted_op(acc, x)
+  end
+  acc
+end
+@Ref function reduce_continuable(op, continuable, init)
+  acc = Ref(init)
   continuable() do x
     acc = op(acc, x)
   end
   acc
 end
 
-function creduce!(op!, acc, continuable)
+function reduce!(op!, continuable::Continuable, acc)
   continuable() do x
     op!(acc, x)
   end
@@ -210,39 +193,43 @@ end
 # zip is the only method which seems to be unimplementable with continuations
 # hence we have to go to tasks or arrays
 
-mzip(cs...) = cont -> begin
+"""
+  zipping continuables via intermediate array representation
+
+CAUTION: loads everything into memory
+"""
+azip(cs...) = @cont begin
   # not possible with continuations... bring it to memory and apply normal zip
-  mem_cs = ccollect.(cs)
-  for t in zip(mem_cs...)
+  array_cs = collect.(cs)
+  for t in zip(array_cs...)
     cont(t)
   end
 end
 
-mzip(cont::Function, cs::StoredIterable) = mzip(cs...)(cont)
-
-tzip(cs...) = cont -> begin
+# TODO or Channels?
+"""
+  zipping continuables via tasks
+"""
+tzip(cs...) = @cont begin
   # or use astask and iterate
   task_cs = astask.(cs)
   for t in zip(task_cs...)
     cont(t)
   end
 end
-tzip(cont::Function, cs::StoredIterable) = tzip(cs...)(cont)
 
 
 ## combine continuables --------------------------------------------
 
+# we cannot overload Base.Iterators.product because the empty case cannot be distinguished between both (long live typesystems like haskell's)
+# but let's default to it
+product(args...; kwargs...) = Base.Iterators.product(args...; kwargs...)
+product() = @cont ()  # mind the space!!
 
-cproduct() = cont -> ()
-
-cproduct(c1) = cont -> begin
-  c1() do x
-    cont(x)
-  end
-end
+product(c1::Continuable) = c1
 
 # note this function in fact returns a continuable, however it is written as highlevel as that no explicit "f(...) = cont -> begin ... end" is needed
-cproduct(c1, c2) = cont -> begin
+product(c1::Continuable, c2::Continuable) = @cont begin
   c1() do x
     c2() do y
       cont((x,y))
@@ -251,7 +238,7 @@ cproduct(c1, c2) = cont -> begin
 end
 
 # this method is underscored because we assume the first continuation to deliver tuples and not values
-_product(c1, c2) = cont -> begin
+_product(c1::Continuable, c2::Continuable) = @cont begin
   c1() do t
     c2() do x
       cont(tuple(t..., x))
@@ -259,42 +246,46 @@ _product(c1, c2) = cont -> begin
   end
 end
 
-@Ref function cproduct(c1, c2, cs...)
-  acc = Ref(cproduct(c1, c2))  # make first into singleton tuple to start recursion
+@Ref function product(c1::Continuable, c2::Continuable, cs::Vararg{<:Continuable})
+  acc = Ref(product(c1, c2))  # make first into singleton tuple to start recursion
   for continuable in cs
     acc = _product(acc, continuable)
   end
   acc
 end
 
-cproduct_do(cont, cs...) = cproduct(cs...)(cont)
-
-
-chain(cs::Function...) = cont -> begin
+chain(cs::Vararg{<:Continuable}) = @cont begin
   for continuable in cs
     continuable(cont)
   end
 end
-chain_do(cont, cs...) = chain(cs...)(cont)
 
-
-@cont function ccycle(cont, continuable)
-  while true
-    continuable(cont)
+const flatten = Base.Iterators.flatten
+"""
+for iterables of continuable use Continuables.chain(...)
+"""
+@cont function flatten(continuable::Continuable)
+  continuable() do subcontinuable
+    subcontinuable(cont)
   end
 end
 
-@cont function ccycle(cont, continuable, n::Integer)
-  for _ in 1:n
-    continuable(cont)
-  end
+
+const cycle = Base.Iterators.cycle
+cycle(continuable::Continuable) = @cont while true
+  continuable(cont)
+end
+
+cycle(continuable::Continuable, n::Integer) = @cont for _ in 1:n
+  continuable(cont)
 end
 
 
 # --------------------------
 
 # generic cmap? only with zip and this is not efficient unfortunately
-@cont @Ref function ctake(cont, continuable, n::Integer)
+const take = Base.Iterators.take
+@cont @Ref function take(continuable::Continuable, n::Integer)
   i = Ref(0)
   stoppable(continuable) do x
     i += 1
@@ -305,7 +296,8 @@ end
   end
 end
 
-@cont function ctakewhile(cont, continuable, bool)
+# TODO There is no takewhile in Base.Iterators.take ...
+@cont function takewhile(bool, continuable::Continuable)
   stoppable(continuable) do x
     if !bool(x)
       stop()
@@ -314,7 +306,8 @@ end
   end
 end
 
-@cont @Ref function cdrop(cont, continuable, n::Integer)
+const drop = Base.Iterators.drop
+@cont @Ref function drop(continuable::Continuable, n::Integer)
   i = Ref(0)
   continuable() do x
     i += 1
@@ -324,7 +317,8 @@ end
   end
 end
 
-@cont @Ref function cdropwhile(cont, continuable, bool)
+# TODO There is no dropwhile in Base.Iterators.take ...
+@cont @Ref function dropwhile(bool, continuable::Continuable)
   dropping = Ref(true)
   continuable() do x
     if dropping
@@ -337,19 +331,8 @@ end
   end
 end
 
-@cont function cflatten(cont, iterable)
-  for continuable in iterable
-    continuable(cont)
-  end
-end
-
-@cont function cflatten(cont, continuable::Function)
-  continuable() do subcontinuable
-    subcontinuable(cont)
-  end
-end
-
-@cont @Ref function cpartition(cont, continuable, n::Integer)
+const partition = Base.Iterators.partition
+@cont @Ref function partition(continuable::Continuable, n::Integer)
   i = Ref(1)
   part = Ref(Vector(n))
   continuable() do x
@@ -367,7 +350,7 @@ end
   end
 end
 
-@cont @Ref function cpartition(cont, continuable, n::Integer, step::Integer)
+@cont @Ref function partition(continuable::Continuable, n::Integer, step::Integer)
   i = Ref(0)
   n_overlap = n - step
   part = Ref(Vector(n))  # TODO get element-type from function return type
@@ -395,7 +378,8 @@ end
 # the interface is different from Itertools.jl
 # we directly return an OrderedDictionary instead of a iterable of values only
 import DataStructures.OrderedDict
-function cgroupbyreduce(by, continuable, op2, op1=identity)
+
+function groupbyreduce(by, continuable, op2, op1=identity)
   d = OrderedDict()
   continuable() do x
     key = by(x)
@@ -407,8 +391,7 @@ function cgroupbyreduce(by, continuable, op2, op1=identity)
   end
   d
 end
-cgroupby(f, continuable) = cgroupbyreduce(f, continuable, push!, x -> [x])
-
+groupby(f, continuable) = groupbyreduce(f, continuable, push!, x -> [x])
 
 # subsets seem to be implemented for arrays in the first place (and not iterables in general)
 # hence better use Iterators.subsets directly
@@ -418,8 +401,7 @@ cgroupby(f, continuable) = cgroupbyreduce(f, continuable, push!, x -> [x])
 
 ## extract values from continuables  ----------------------------------------
 
-
-@Ref function cnth(continuable::Function, n)
+@Ref function nth(continuable::Function, n)
   i = Ref(0)
   ret = stoppable(continuable) do x
     i += 1
@@ -434,30 +416,22 @@ cgroupby(f, continuable) = cgroupbyreduce(f, continuable, push!, x -> [x])
   ret
 end
 
-@Ref function ccount(continuable)
-  i = Ref(0)
-  continuable() do _
-    i += 1
-  end
-  i
-end
-
-
 ## create continuables ----------------------------
 
-@cont function crepeatedly(cont, f)
+
+@cont function repeated(f)
   while true
     cont(f())
   end
 end
 
-@cont function crepeatedly(cont, f, n::Integer)
+@cont function repeated(f, n::Integer)
   for _ in 1:n
     cont(f())
   end
 end
 
-@cont @Ref function citerate(cont, f, x)
+@cont @Ref function iterate(f, x)
   a = Ref(x)
   while true
     a = f(a)

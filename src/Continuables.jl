@@ -44,7 +44,7 @@ struct Continuable{Elem, Func, Length <: Union{Nothing, Integer, Base.IsInfinite
   f::Func
   length::Length
   size::Size
-  function Continuable{Elem}(func::Func; length=nothing, size=nothing) where {Elem, Func}
+  function Continuable{Elem}(f::Func; length=nothing, size=nothing) where {Elem, Func}
     new{Elem, Func, typeof(length), typeof(size)}(f, length, size)
   end
 end
@@ -71,7 +71,6 @@ Base.eltype(::Continuable{Elem}) where Elem = Elem
 Base.IteratorSize(::Continuable{Elem, Length, Size, Func}) where {Elem, Length <: Nothing, Size <: Nothing, Func} = Base.SizeUnknown()
 Base.IteratorSize(::Continuable{Elem, Length, Size, Func}) where {Elem, Length <: Integer, Size <: Nothing, Func} = Base.HasLength()
 Base.IteratorSize(::Continuable{Elem, Length, Size, Func}) where {Elem, Length <: Base.IsInfinite, Size <: Nothing, Func} = Base.IsInfinite()
-Base.IteratorSize(::Continuable{Elem, Length, Size, Func}) where {Elem, Length, Size <: Tuple, Func} = Base.HasShape{length(Size.parameters)}()
 Base.IteratorSize(::Continuable{Elem, Length, Size, Func}) where {Elem, Length, Size <: Tuple, Func} = Base.HasShape{length(Size.parameters)}()
 Base.IteratorEltype(::Continuable{Any}) = Base.EltypeUnknown()
 
@@ -108,6 +107,7 @@ end
 # TODO udpate
 astask(continuable) = @task continuable(produce)
 
+# TODO improve to reuse IteratorSize and similar information
 ascontinuable(iterable) = @cont foreach(cont, iterable)
 macro i2c(expr)
   esc(:(ascontinuable($expr)))
@@ -124,14 +124,27 @@ Stop = StopException(nothing)
 stop() = throw(Stop)
 stop(ret) = throw(StopException(ret))
 
-stoppable(continuable::Continuable) = @cont begin
+"""
+  contextmanager handling custom breakpoints with ``stop()``
+
+This is usually only used within creating a new continuable from a previous one
+Examples
+```
+@cont stop_at4(continuable) = stoppable(continuable) do x
+  x == 4 && stop()
+  cont(x)
+end
+```
+"""
+function stoppable(func, continuable)
   try
-    continuable(cont)
+    continuable(func)
+    nothing  # default returnvalue to be able to handle ``stop(returnvalue)`` savely
   catch exc
     if !isa(exc, StopException)
       rethrow(exc)
     end
-    return exc.ret
+    exc.ret
   end
 end
 
@@ -181,6 +194,19 @@ end
   acc
 end
 
+"""
+  mutating version of reduce!
+
+op! is assumed to mutate its first argument (the accumulator)
+hence ``init`` has to be given
+"""
+function reduce!(op!, continuable::Continuable; init = nothing)
+  if isnothing(init)
+    throw(ArgumentError("reduce! needs initial state ``init`` as op! mutates it"))
+  else
+    reduce!(op!, continuable, init)
+  end
+end
 function reduce!(op!, continuable::Continuable, acc)
   continuable() do x
     op!(acc, x)
@@ -317,15 +343,15 @@ const drop = Base.Iterators.drop
   end
 end
 
-# TODO There is no dropwhile in Base.Iterators.take ...
+# TODO There is no dropwhile in Base.Iterators ...
 @cont @Ref function dropwhile(bool, continuable::Continuable)
   dropping = Ref(true)
   continuable() do x
     if dropping
       dropping &= bool(x)
-    # TODO adding else with cont(x); return would increase the amounts of asking droppibg by factor of 2. Test this!
-    end
-    if !dropping
+      # without nested "if" statement we would have to use two separate if statements at the top (instead of using if else)
+      !dropping && cont(x)
+    else
       cont(x)
     end
   end
@@ -401,7 +427,7 @@ groupby(f, continuable) = groupbyreduce(f, continuable, push!, x -> [x])
 
 ## extract values from continuables  ----------------------------------------
 
-@Ref function nth(continuable::Function, n)
+@Ref function nth(continuable::Continuable, n)
   i = Ref(0)
   ret = stoppable(continuable) do x
     i += 1
@@ -411,7 +437,7 @@ groupby(f, continuable) = groupbyreduce(f, continuable, push!, x -> [x])
     end
   end
   if ret === nothing
-    error("continuation shorter than n")
+    error("given continuable has length $i < $n")
   end
   ret
 end

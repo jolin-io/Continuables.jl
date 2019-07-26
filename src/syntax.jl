@@ -7,7 +7,8 @@
 function refify!(expr::Expr, Refs::Vector{Symbol}=Vector{Symbol}())
   expr.head == :. && return  # short cycle if we have a dot access expression, as we don't want to change in there
 
-  for (i, a) in enumerate(expr.args)
+  # important to use Base.enumerate as plain enumerate would bring Base.enumerate into namespace, however we want to create an own const link
+  for (i, a) in Base.enumerate(expr.args)
     if (isa(a, Expr) && a.head == :(=) && isa(a.args[1], Symbol)
         && isa(a.args[2], Expr) && a.args[2].args[1] == :Ref && a.args[2].head == :call)
       push!(Refs, a.args[1])
@@ -72,7 +73,8 @@ mutable struct ParsedFunctionExpr
   function ParsedFunctionExpr(expr::Expr)
     @assert expr.head in (:function, :(=))
     call::Expr = expr.args[1]
-    body = expr.args[2:end]
+    @assert length(expr.args) == 2
+    body = expr.args[2]
     isanonymous = call.head == :tuple
     name, args = if isanonymous
       nothing, call.args
@@ -84,17 +86,17 @@ mutable struct ParsedFunctionExpr
 end
 function Base.convert(::Type{Expr}, pfe::ParsedFunctionExpr)
   if isnothing(pfe.name)
-    esc(quote
+    quote
       function ($(pfe.args...),)
         $(pfe.body)
       end
-    end)
+    end
   else
-    esc(quote
+    quote
       function $(pfe.name)($(pfe.args...),)
         $(pfe.body)
       end
-    end)
+    end
   end
 end
 
@@ -113,11 +115,11 @@ macro cont(expr)
   esc(cont_expr(expr))
 end
 macro cont(elemtype, expr)
-  expr = macroexpand(__module__, expr)  # get rid of maybe confusing 
+  expr = macroexpand(__module__, expr)  # get rid of maybe confusing macros
   esc(cont_expr(expr, elemtype = elemtype))
 end
 macro cont(elemtype, length, expr)
-  expr = macroexpand(__module__, expr)  # get rid of maybe confusing 
+  expr = macroexpand(__module__, expr)  # get rid of maybe confusing macros
   if length isa Expr && length.head == :tuple  # support for tuple sizes as second argument
     esc(cont_expr(expr, elemtype = elemtype, size = length))
   else  
@@ -125,13 +127,13 @@ macro cont(elemtype, length, expr)
   end
 end
 macro cont(elemtype, length, size, expr)
-  expr = macroexpand(__module__, expr)  # get rid of maybe confusing 
+  expr = macroexpand(__module__, expr)  # get rid of maybe confusing macros
   esc(cont_expr(expr, elemtype = elemtype, length = length, size = size))
 end
 
 function cont_expr(expr::Expr; elemtype=Any, length=nothing, size=nothing)
   if is_functionexpr(expr)
-    cont_funcexpr(expr, elemtype, length, size)
+    cont_funcexpr(expr; elemtype = elemtype, length = length, size = size)
   else
     quote
       Continuables.Continuable(cont -> $expr)
@@ -147,7 +149,7 @@ function cont_funcexpr(expr::Expr; elemtype=Any, length=nothing, size=nothing)
   end "No function parameter can be called ``cont`` for @cont to apply."
   
   # return Continuable instead
-  func.body = :(Continuables.Continuable{elemtype}(cont -> $(func.body); length=length, size=size))
+  func.body = :(Continuables.Continuable{$elemtype}(cont -> $(func.body); length=$length, size=$size))
 
   # make Expr
   convert(Expr, func)

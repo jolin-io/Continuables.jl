@@ -1,18 +1,90 @@
+using ASTParser
+using SimpleMatch
 
 # @Ref
 # ====
 
-# we use Julia's default Ref type for single variable references
+# TODO also replace ``::Ref`` annotations. Currently only ``r = Ref(2)`` assignments are replaced.
 
-function refify!(expr::Expr, Refs::Vector{Symbol}=Vector{Symbol}())
-  expr.head == :. && return  # short cycle if we have a dot access expression, as we don't want to change in there
+const _parser = Matchers.AnyOf(Parsers.NestedDot(), Parsers.Function())
 
+# entrypoint - start with empty list of substitutions
+refify!(expr::Expr) = refify!(expr, Vector{Symbol}())
+
+# map Expr to Parsers
+refify!(any, ::Vector{Symbol}) = ()  # if there is no expression (or Vector, see below), we cannot refify anything
+refify!(expr::Expr, Refs::Vector{Symbol}) = refify!(expr, Refs, @TryCatch ParseError _parser(expr))
+
+
+# if specific parser was detected, then dispatch directly on Parsed result
+refify!(expr::Expr, Refs::Vector{Symbol}, parsed::Try{P, Success}) where P = refify!(expr, Refs, parsed.value)
+
+# Specific Parsers
+function refify!(expr::Expr, Refs::Vector{Symbol}, nesteddot_parsed::Parsers.NestedDot_Parsed)
+  # refify only most left dot expression ``nesteddot_parsed.base``, i.e. the object which is originally accessed
+  @match(nesteddot_parsed.base) do f
+    # if `nesteddot_parsed.base` is a Symbol, we cannot do in-place replacement with refify! but can only changed the parsed result
+    f(_) = nothing
+    f(s::Symbol) = nesteddot_parsed.base = refify_symbol(s, Refs)
+    f(e::Expr) = refify!(e, Refs)
+  end
+
+  # as not everything could be replaced inplace, we still have to inplace-replace the whole parsed expression
+  newexpr = toAST(nesteddot_parsed)
+  expr.head = newexpr.head
+  expr.args = newexpr.args
+end
+
+function refify!(expr::Expr, Refs::Vector{Symbol}, function_parsed::Parsers.Function_Parsed)
+  # when going into a function, we need to ignore the function parameter names from Refs as they are new variables, not related to the Refs
+  args = [Parsers.Arg()(arg) for arg in function_parsed.args]
+  kwargs = [Parsers.Arg()(kwarg) for kwarg in function_parsed.kwargs]
+
+  # recurse into any default arguments
+  for arg in [args; kwargs]
+    @match(arg.default) do f
+      f(_) = nothing
+      # in case of Symbol we can only change the parsed result in place, but not the original expression
+      f(s::Symbol) = arg.default = refify_symbol(s, Refs)
+      f(e::Expr) = refify!(e, Refs)
+    end
+  end
+
+  # recurse into body with function arguments not being refified
+  args_names = [arg.name for arg in args if arg.name != nothing]
+  kwargs_names = [kwarg.name for kwarg in kwargs if kwarg.name != nothing]
+  # CAUTION: we need to use Base.filter so that we can still overwrite filter in the module
+  Refs::Vector{Symbol} = Base.filter(ref -> ref ∉ args_names && ref ∉ kwargs_names, Refs)
+  refify!(function_parsed.body, Refs)
+
+  # some parts might not have been replaced-inplace in the original expression
+  # hence we have to replace the whole expression
+  function_parsed.args = args
+  function_parsed.kwargs = kwargs
+  newexpr = toAST(function_parsed)
+  expr.head = newexpr.head
+  expr.args = newexpr.args
+end
+
+
+# if no parser was successful, recurse into expr.args
+
+# core logic, capture each new Ref, substitute each old one
+# this has to be done on expr.args level, as Refs on the same level need to be available for replacement
+# Additionally, this has to be done on expr.args level because Symbols can only be replaced inplace on the surrounding Vector
+function refify!(expr::Expr, Refs::Vector{Symbol}, ::Try{<:Any, Exception})
   # important to use Base.enumerate as plain enumerate would bring Base.enumerate into namespace, however we want to create an own const link
   for (i, a) in Base.enumerate(expr.args)
-    if (isa(a, Expr) && a.head == :(=) && isa(a.args[1], Symbol)
-        && isa(a.args[2], Expr) && a.args[2].args[1] == :Ref && a.args[2].head == :call)
-      push!(Refs, a.args[1])
-
+    Ref_assignment_parser = Parsers.Assignment(
+      left = Parsers.Symbol(),
+      right = Parsers.Call(
+        name = :Ref,
+      ),
+    )
+    parsed = @TryCatch ParseError Ref_assignment_parser(a)
+    if issuccess(parsed)
+      # create new Refs to properly handle subexpressions with Refs (so that no sideeffects occur)
+      Refs = Symbol[Refs; parsed.value.left.symbol]
     else
       substituted = false
 
@@ -31,7 +103,15 @@ function refify!(expr::Expr, Refs::Vector{Symbol}=Vector{Symbol}())
   end
 end
 
-refify!(s, ::Vector{Symbol}) = ()  # if there is no expression, we cannot refify anything
+function refify_symbol(sym::Symbol, Refs::Vector{Symbol})
+  for r in Refs
+    if sym == r
+      return :($sym.x)
+    end
+  end
+  # default to identity
+  sym
+end
 
 macro Ref(expr)
   refify!(expr)
@@ -44,61 +124,6 @@ end
 # @cont
 # =====
 
-
-function extract_symbol(a)
-  if isa(a, Symbol)
-    a
-  elseif isa(a.args[1], Symbol) # something like Type annotation a::Any or Defaultvalue b = 3
-    a.args[1]
-  else # Type annotation with Defaultvalue
-    a.args[1].args[1]
-  end
-end
-
-is_functionexpr(_) = false
-function is_functionexpr(expr::Expr)
-  ((expr.head == :function 
-      && expr.args[1] isa Expr
-      && expr.args[1].head in (:tuple, :call))   
-  || (expr.head == :(=) 
-    && expr.args[1] isa Expr
-    && expr.args[1].head == :call))
-end
-
-mutable struct ParsedFunctionExpr
-  name::Union{Symbol, Nothing}  # we don't put this into a struct parameter because we want to easily mutate a parsedfunctionexpr to become anonymous
-  args::Vector{Union{Symbol, Expr}}
-  body::Expr
-
-  function ParsedFunctionExpr(expr::Expr)
-    @assert expr.head in (:function, :(=))
-    call::Expr = expr.args[1]
-    @assert length(expr.args) == 2
-    body = expr.args[2]
-    isanonymous = call.head == :tuple
-    name, args = if isanonymous
-      nothing, call.args
-    else
-      call.args[1], call.args[2:end]
-    end
-    new(name, args, body)
-  end
-end
-function Base.convert(::Type{Expr}, pfe::ParsedFunctionExpr)
-  if isnothing(pfe.name)
-    quote
-      function ($(pfe.args...),)
-        $(pfe.body)
-      end
-    end
-  else
-    quote
-      function $(pfe.name)($(pfe.args...),)
-        $(pfe.body)
-      end
-    end
-  end
-end
 
 macro assert_noerror(expr, msg)
   esc(quote
@@ -122,7 +147,7 @@ macro cont(elemtype, length, expr)
   expr = macroexpand(__module__, expr)  # get rid of maybe confusing macros
   if length isa Expr && length.head == :tuple  # support for tuple sizes as second argument
     esc(cont_expr(expr, elemtype = elemtype, size = length))
-  else  
+  else
     esc(cont_expr(expr, elemtype = elemtype, length = length))
   end
 end
@@ -132,7 +157,7 @@ macro cont(elemtype, length, size, expr)
 end
 
 function cont_expr(expr::Expr; elemtype=Any, length=nothing, size=nothing)
-  if is_functionexpr(expr)
+  if issuccess(@TryCatch ParseError Parsers.Function()(expr))
     cont_funcexpr(expr; elemtype = elemtype, length = length, size = size)
   else
     quote
@@ -141,16 +166,25 @@ function cont_expr(expr::Expr; elemtype=Any, length=nothing, size=nothing)
   end
 end
 
+function _extract_symbol(a)
+  if isa(a, Symbol)
+    a
+  elseif isa(a.args[1], Symbol) # something like Type annotation a::Any or Defaultvalue b = 3
+    a.args[1]
+  else # Type annotation with Defaultvalue
+    a.args[1].args[1]
+  end
+end
 
 function cont_funcexpr(expr::Expr; elemtype=Any, length=nothing, size=nothing)
-  func = ParsedFunctionExpr(expr)
-  @assert all(func.args) do s
-    extract_symbol(s) != :cont
+  func_parsed = Parsers.Function()(expr)
+  @assert Base.all(func_parsed.args) do s
+    _extract_symbol(s) != :cont
   end "No function parameter can be called ``cont`` for @cont to apply."
-  
+
   # return Continuable instead
-  func.body = :(Continuables.Continuable{$elemtype}(cont -> $(func.body); length=$length, size=$size))
+  func_parsed.body = :(Continuables.Continuable{$elemtype}(cont -> $(func_parsed.body); length=$length, size=$size))
 
   # make Expr
-  convert(Expr, func)
+  toAST(func_parsed)
 end

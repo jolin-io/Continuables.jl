@@ -23,29 +23,43 @@ https://github.com/JuliaCollections/Iterators.jl/blob/master/src/Iterators.jl.
 # TODO copy documentation strings
 module Continuables
 export
-  singleton,
-  astask, ascontinuable, @i2c, stoppable, stop, 
-  reduce!, azip, tzip, product, chain, flatten, cycle, 
+  cont, @cont, Continuable,
+  @Ref, stoppable, stop,
+  singleton, repeated, iterate,
+  astask, ascontinuable, @i2c,
+  reduce, reduce!, zip, product, chain, flatten, cycle, all, any,
   take, takewhile, drop, dropwhile, partition, groupbyreduce, groupby,
-  nth, @Ref, @cont
+  nth
+
+using ASTParser
+using DataTypesBasic
+
+include("utils.jl")
+include("itertools.jl")
+
+## Continuable Core -------------------------------------------------------------------------
 
 """
 ``cont`` is reserved function parameter name
 """
 cont(args...; kwargs...) = error("``cont`` is a reserved function parameter name")
 
-# we decided to have an extra type to reuse existing function knowhow by properly dispatching
+
 """
   Continuable(func)
 
 Assumes func to have a single argument, the continuation function (usually named `cont`).
 """
-struct Continuable{Elem, Func, Length <: Union{Nothing, Integer, Base.IsInfinite}, Size <: Union{Nothing, Tuple{Vararg{Integer}}}}  # TODO add Length information like in the Iterable interface as typeparameters
+struct Continuable{Elem, Length <: Union{Nothing, Integer, Base.IsInfinite}, Size <: Union{Nothing, Tuple{Vararg{Integer}}}, Func}  # TODO add Length information like in the Iterable interface as typeparameters
   f::Func
   length::Length
   size::Size
   function Continuable{Elem}(f::Func; length=nothing, size=nothing) where {Elem, Func}
-    new{Elem, Func, typeof(length), typeof(size)}(f, length, size)
+    if !isnothing(size) && isnothing(length)
+      # fill length
+      length = prod(size)
+    end
+    new{Elem, typeof(length), typeof(size), Func}(f, length, size)
   end
 end
 Continuable(f; kwargs...) = Continuable{Any}(f; kwargs...)
@@ -56,6 +70,8 @@ include("./syntax.jl")  # some require the Continuable definition, hence here
 const length = Base.length
 length(c::Continuable{Elem, Length, Size}) where {Elem, Length <: Nothing, Size <: Tuple} = prod(c.size)
 length(c::Continuable{Elem, Length}) where {Elem, Length <: Integer} = c.length
+
+
 @Ref function length(continuable::Continuable)
   i = Ref(0)
   continuable() do _
@@ -75,9 +91,51 @@ Base.IteratorSize(::Continuable{Elem, Length, Size, Func}) where {Elem, Length, 
 Base.IteratorEltype(::Continuable{Any}) = Base.EltypeUnknown()
 
 
-## Core Transformations ----------------------------------------
+## conversions ----------------------------------------------
 
-## Core functions --------------------------------------------------
+_get_csize(c::Continuable{<:Any, Nothing}) = 0
+_get_csize(c::Continuable{<:Any, Base.IsInfinite}) = 0
+_get_csize(c::Continuable{<:Any, <:Integer}) = c.length
+
+astask(continuable::Continuable{Elem}) where Elem = Channel(ctype=Elem, csize=_get_csize(continuable)) do channel
+  continuable() do x
+    put!(channel, x)
+  end
+end
+
+# TODO improve to reuse IteratorSize and similar information
+ascontinuable(iterable) = @cont foreach(cont, iterable)
+macro i2c(expr)
+  esc(:(ascontinuable($expr)))
+end
+
+
+## factories -----------------------------------------------
+
+singleton(value) = @cont cont(value)
+
+@cont function repeated(f)
+  while true
+    cont(f())
+  end
+end
+
+@cont function repeated(f, n::Integer)
+  for _ in 1:n
+    cont(f())
+  end
+end
+
+@cont @Ref function iterate(f, x)
+  a = Ref(x)
+  while true
+    a = f(a)
+    cont(a)
+  end
+end
+
+
+## core helpers ----------------------------------------------------------
 
 const collect = Base.collect
 function collect(c::Continuable{Elem, <:Integer, Nothing}) where Elem
@@ -103,53 +161,6 @@ end
   end
   a
 end
-
-# TODO udpate
-astask(continuable) = @task continuable(produce)
-
-# TODO improve to reuse IteratorSize and similar information
-ascontinuable(iterable) = @cont foreach(cont, iterable)
-macro i2c(expr)
-  esc(:(ascontinuable($expr)))
-end
-
-singleton(value) = @cont cont(value)
-
-# We realise early stopping via exceptions
-
-struct StopException{T} <: Exception
-  ret::T
-end
-Stop = StopException(nothing)
-stop() = throw(Stop)
-stop(ret) = throw(StopException(ret))
-
-"""
-  contextmanager handling custom breakpoints with ``stop()``
-
-This is usually only used within creating a new continuable from a previous one
-Examples
-```
-@cont stop_at4(continuable) = stoppable(continuable) do x
-  x == 4 && stop()
-  cont(x)
-end
-```
-"""
-function stoppable(func, continuable)
-  try
-    continuable(func)
-    nothing  # default returnvalue to be able to handle ``stop(returnvalue)`` savely
-  catch exc
-    if !isa(exc, StopException)
-      rethrow(exc)
-    end
-    exc.ret
-  end
-end
-
-
-## core functional helpers ----------------------------------------------------------
 
 const enumerate = Base.enumerate
 
@@ -197,12 +208,14 @@ end
 """
   mutating version of reduce!
 
-op! is assumed to mutate its first argument (the accumulator)
-hence ``init`` has to be given
+if no ``init`` is given
+    ``op!`` is assumed to mutate a hidden state (equivalent to mere continuation)
+else
+    ``init`` is the explicit state and will be passed to ``op!`` as first argument (the accumulator)
 """
 function reduce!(op!, continuable::Continuable; init = nothing)
   if isnothing(init)
-    throw(ArgumentError("reduce! needs initial state ``init`` as op! mutates it"))
+    continuable(op!)
   else
     reduce!(op!, continuable, init)
   end
@@ -214,6 +227,44 @@ function reduce!(op!, continuable::Continuable, acc)
   acc
 end
 
+const all = Base.all
+@Ref function all(continuable::Continuable; lazy=true)
+  if lazy
+    stoppable(continuable, true) do b
+      if !b
+        stop(false)
+      end
+    end
+
+  else # non-lazy
+    b = Ref(true)
+    continuable() do x
+      b &= x
+    end
+    b
+  end
+end
+all(f, continuable::Continuable; kwargs...) = all(map(f, continuable); kwargs...)
+
+
+const any = Base.any
+@Ref function any(continuable::Continuable; lazy=true)
+  if lazy
+    stoppable(continuable, false) do b
+      if b
+        stop(true)
+      end
+    end
+
+  else # non-lazy
+    b = Ref(false)
+    continuable() do x
+      b |= x
+    end
+    b
+  end
+end
+any(f, continuable::Continuable; kwargs...) = any(map(f, continuable); kwargs...)
 
 ## zip ----------------------------
 # zip is the only method which seems to be unimplementable with continuations
@@ -232,7 +283,6 @@ azip(cs...) = @cont begin
   end
 end
 
-# TODO or Channels?
 """
   zipping continuables via tasks
 """
@@ -244,6 +294,24 @@ tzip(cs...) = @cont begin
   end
 end
 
+const zip = Base.zip
+function zip(cs::Continuable...; lazy=true)
+  if lazy
+    tzip(cs...)
+  else
+    azip(cs...)
+  end
+end
+
+
+const cycle = Base.Iterators.cycle
+cycle(continuable::Continuable) = @cont while true
+  continuable(cont)
+end
+
+cycle(continuable::Continuable, n::Integer) = @cont for _ in 1:n
+  continuable(cont)
+end
 
 ## combine continuables --------------------------------------------
 
@@ -280,11 +348,6 @@ end
   acc
 end
 
-chain(cs::Vararg{<:Continuable}) = @cont begin
-  for continuable in cs
-    continuable(cont)
-  end
-end
 
 const flatten = Base.Iterators.flatten
 """
@@ -296,14 +359,11 @@ for iterables of continuable use Continuables.chain(...)
   end
 end
 
-
-const cycle = Base.Iterators.cycle
-cycle(continuable::Continuable) = @cont while true
-  continuable(cont)
-end
-
-cycle(continuable::Continuable, n::Integer) = @cont for _ in 1:n
-  continuable(cont)
+chain(cs::Vararg) = flatten(cs)
+chain(cs::Vararg{<:Continuable}) = @cont begin
+  for continuable in cs
+    continuable(cont)
+  end
 end
 
 
@@ -322,7 +382,7 @@ const take = Base.Iterators.take
   end
 end
 
-# TODO There is no takewhile in Base.Iterators.take ...
+takewhile(bool, iterable) = TakeWhile(bool,  iterable)
 @cont function takewhile(bool, continuable::Continuable)
   stoppable(continuable) do x
     if !bool(x)
@@ -337,13 +397,13 @@ const drop = Base.Iterators.drop
   i = Ref(0)
   continuable() do x
     i += 1
-    if i >= n
+    if i > n
       cont(x)
     end
   end
 end
 
-# TODO There is no dropwhile in Base.Iterators ...
+dropwhile(bool, iterable) = DropWhile(bool, iterable)
 @cont @Ref function dropwhile(bool, continuable::Continuable)
   dropping = Ref(true)
   continuable() do x
@@ -357,29 +417,41 @@ end
   end
 end
 
+function drop_from_first_unassigned(vec::Vector)
+  n = length(vec)
+  for i in 1:n
+    if !isassigned(vec, i)
+      return vec[1:(i-1)]
+    end
+  end
+  return vec
+end
+
+
 const partition = Base.Iterators.partition
-@cont @Ref function partition(continuable::Continuable, n::Integer)
+@cont @Ref function partition(continuable::Continuable{Elem}, n::Integer) where Elem
   i = Ref(1)
-  part = Ref(Vector(n))
+  part = Ref(Vector{Elem}(undef, n))
   continuable() do x
     part[i] = x
     i += 1
     if i > n
       cont(part)
-      part = Vector(n)  # extract return type from cont function, possible? I think not, julia is not haskell... unfortunately
+      part = Vector{Elem}(undef, n)
       i = 1
     end
   end
   # final bit # TODO is this wanted? with additional step parameter I think this is mostly unwanted
   if i > 1
-    cont(part)
+    # following the implementation for iterable, we cut the length to the defined part
+    cont(drop_from_first_unassigned(part))
   end
 end
 
-@cont @Ref function partition(continuable::Continuable, n::Integer, step::Integer)
+@cont @Ref function partition(continuable::Continuable{Elem}, n::Integer, step::Integer) where Elem
   i = Ref(0)
   n_overlap = n - step
-  part = Ref(Vector(n))  # TODO get element-type from function return type
+  part = Ref(Vector{Elem}(undef, n))
   continuable() do x
     i += 1
     if i > 0  # if i is negative we simply skip these
@@ -389,11 +461,11 @@ end
       cont(part)
       if n_overlap > 0
         overlap = part[1+step:n]
-        part = Vector(n)  # TODO get element-type from function return type
+        part = Vector{Elem}(undef, n)
         part[1:n_overlap] = overlap
       else
         # we need to recreate new part because of references
-        part = Vector(n)  # TODO get element-type from function return type
+        part = Vector{Elem}(undef, n)
       end
       i = n_overlap
     end
@@ -405,7 +477,17 @@ end
 # we directly return an OrderedDictionary instead of a iterable of values only
 import DataStructures.OrderedDict
 
-function groupbyreduce(by, continuable, op2, op1=identity)
+"""
+  group elements of `continuable` by `by`, aggregating immediately with `op2`/`op1`
+
+Parameters
+----------
+by: function of element to return the key for the grouping/dict
+continuable: will get grouped
+op2: f(accumulator, element) = new_accumulator
+op1: f(element) = initial_accumulator
+"""
+function groupbyreduce(by, continuable::Continuable, op2, op1=identity)
   d = OrderedDict()
   continuable() do x
     key = by(x)
@@ -417,12 +499,19 @@ function groupbyreduce(by, continuable, op2, op1=identity)
   end
   d
 end
-groupby(f, continuable) = groupbyreduce(f, continuable, push!, x -> [x])
+groupby(f, continuable::Continuable) = groupbyreduce(f, continuable, push!, x -> [x])
+
+# adding iterable versions for the general case (tests showed that these are actually compiling to the iterable version in terms of code and speed, awesome!)
+groupbyreduce(by, iterable, op2, op1=identity) = groupbyreduce(by, ascontinuable(iterable), op2, op1)
+groupby(f, iterable) = groupby(f, ascontinuable(iterable))
+
+
+## subsets & peekiter -------------------------------------------------------
 
 # subsets seem to be implemented for arrays in the first place (and not iterables in general)
-# hence better use Iterators.subsets directly
+# hence better use IterTools.subsets directly
 
-# peekiter is the only method if Iterators.jl missing. However it in fact makes no sense for continuables
+# peekiter is the only method of Iterators.jl missing. However it in fact makes no sense for continuables
 # as they are functions and don't get consumed
 
 ## extract values from continuables  ----------------------------------------
@@ -440,29 +529,6 @@ groupby(f, continuable) = groupbyreduce(f, continuable, push!, x -> [x])
     error("given continuable has length $i < $n")
   end
   ret
-end
-
-## create continuables ----------------------------
-
-
-@cont function repeated(f)
-  while true
-    cont(f())
-  end
-end
-
-@cont function repeated(f, n::Integer)
-  for _ in 1:n
-    cont(f())
-  end
-end
-
-@cont @Ref function iterate(f, x)
-  a = Ref(x)
-  while true
-    a = f(a)
-    cont(a)
-  end
 end
 
 end  # module

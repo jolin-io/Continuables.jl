@@ -2,3 +2,6 @@
 *.jl.*.cov
 *.jl.mem
 .gitignore0
+Manifest.toml
+*~
+*.swp

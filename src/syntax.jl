@@ -17,7 +17,7 @@ refify!(expr::Expr, Refs::Vector{Symbol}) = refify!(expr, Refs, @TryCatch ParseE
 
 
 # if specific parser was detected, then dispatch directly on Parsed result
-refify!(expr::Expr, Refs::Vector{Symbol}, parsed::Try{P, Success}) where P = refify!(expr, Refs, parsed.value)
+refify!(expr::Expr, Refs::Vector{Symbol}, parsed::Success{P}) where P = refify!(expr, Refs, parsed.value)
 
 # Specific Parsers
 function refify!(expr::Expr, Refs::Vector{Symbol}, nesteddot_parsed::Parsers.NestedDot_Parsed)
@@ -72,7 +72,7 @@ end
 # core logic, capture each new Ref, substitute each old one
 # this has to be done on expr.args level, as Refs on the same level need to be available for replacement
 # Additionally, this has to be done on expr.args level because Symbols can only be replaced inplace on the surrounding Vector
-function refify!(expr::Expr, Refs::Vector{Symbol}, ::Try{<:Any, Exception})
+function refify!(expr::Expr, Refs::Vector{Symbol}, ::Failure{<:Any})
   # important to use Base.enumerate as plain enumerate would bring Base.enumerate into namespace, however we want to create an own const link
   for (i, a) in Base.enumerate(expr.args)
     Ref_assignment_parser = Parsers.Assignment(

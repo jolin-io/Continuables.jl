@@ -10,9 +10,10 @@ If you come from Python, use Continuables wherever you would use generators. If 
 This package implements all standard functions like e.g. ``collect``, `reduce`, `any` and others. As well as functionalities known from `Base.Iterators` and [``IterTools.jl``](https://github.com/JuliaCollections/IterTools.jl) like `take`, `dropwhile`, `groupby`, `partition`, `nth` and others.
 
 
-Outline
+** Outline **
 <!-- TOC START min:1 max:3 link:true asterisk:true update:true -->
 * [Continuables](#continuables)
+* [Installation](#installation)
 * [Example of a Continuable](#example-of-a-continuable)
 * [The ``@Ref`` macro](#the-ref-macro)
 * [Benchmark](#benchmark)
@@ -20,6 +21,7 @@ Outline
 <!-- TOC END -->
 
 
+# Installation
 
 
 

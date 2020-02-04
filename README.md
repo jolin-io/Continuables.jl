@@ -27,7 +27,8 @@ This package and some dependencies are not yet centrally registered, but availab
 
 ```julia
 using Pkg
-pkg"registry add https://github.com/schlichtanders/SchlichtandersJuliaRegistry.jl"
+pkg"registry add https://github.com/JuliaRegistries/General"  # central julia repository
+pkg"registry add https://github.com/schlichtanders/SchlichtandersJuliaRegistry.jl"  # custom repository
 pkg"add Continuables"
 ```
 

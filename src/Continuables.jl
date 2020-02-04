@@ -26,8 +26,8 @@ export
   cont, @cont, Continuable,
   @Ref, stoppable, stop,
   singleton, repeated, iterate,
-  astask, ascontinuable, @i2c,
-  reduce, reduce!, zip, product, chain, flatten, cycle, all, any,
+  aschannel, ascontinuable, i2c, @i2c,
+  reduce, reduce!, zip, product, chain, flatten, cycle, foreach, map, all, any,
   take, takewhile, drop, dropwhile, partition, groupbyreduce, groupby,
   nth
 
@@ -97,7 +97,7 @@ _get_csize(c::Continuable{<:Any, Nothing}) = 0
 _get_csize(c::Continuable{<:Any, Base.IsInfinite}) = 0
 _get_csize(c::Continuable{<:Any, <:Integer}) = c.length
 
-astask(continuable::Continuable{Elem}) where Elem = Channel(ctype=Elem, csize=_get_csize(continuable)) do channel
+aschannel(continuable::Continuable{Elem}) where Elem = Channel{Elem}(size=_get_csize(continuable)) do channel
   continuable() do x
     put!(channel, x)
   end
@@ -105,6 +105,7 @@ end
 
 # TODO improve to reuse IteratorSize and similar information
 ascontinuable(iterable) = @cont foreach(cont, iterable)
+const i2c = ascontinuable
 macro i2c(expr)
   esc(:(ascontinuable($expr)))
 end
@@ -171,6 +172,9 @@ const enumerate = Base.enumerate
     i += 1
   end
 end
+
+const foreach = Base.foreach
+foreach(func, continuable::Continuable) = continuable(func)
 
 const map = Base.map
 map(func, continuable::Continuable) = @cont continuable(x -> cont(func(x)))
@@ -284,12 +288,12 @@ azip(cs...) = @cont begin
 end
 
 """
-  zipping continuables via tasks
+  zipping continuables via Channel
 """
-tzip(cs...) = @cont begin
-  # or use astask and iterate
-  task_cs = astask.(cs)
-  for t in zip(task_cs...)
+chzip(cs...) = @cont begin
+  # or use aschannel and iterate
+  channel_cs = aschannel.(cs)
+  for t in zip(channel_cs...)
     cont(t)
   end
 end
@@ -297,7 +301,7 @@ end
 const zip = Base.zip
 function zip(cs::Continuable...; lazy=true)
   if lazy
-    tzip(cs...)
+    chzip(cs...)
   else
     azip(cs...)
   end
@@ -381,6 +385,7 @@ const take = Base.Iterators.take
     cont(x)
   end
 end
+take(n::Integer, continuable::Continuable) = take(continuable, n)
 
 takewhile(bool, iterable) = TakeWhile(bool,  iterable)
 @cont function takewhile(bool, continuable::Continuable)
@@ -516,7 +521,7 @@ groupby(f, iterable) = groupby(f, ascontinuable(iterable))
 
 ## extract values from continuables  ----------------------------------------
 
-@Ref function nth(continuable::Continuable, n)
+@Ref function nth(continuable::Continuable, n::Integer)
   i = Ref(0)
   ret = stoppable(continuable) do x
     i += 1
@@ -530,5 +535,6 @@ groupby(f, iterable) = groupby(f, ascontinuable(iterable))
   end
   ret
 end
+nth(n::Integer, continuable::Continuable) = nth(continuable, n)
 
 end  # module

@@ -23,11 +23,17 @@ This package implements all standard functions like e.g. ``collect``, `reduce`, 
 
 # Installation
 
+This package and some dependencies are not yet centrally registered, but available via a custom registry. All you need to install is the following:
 
+```julia
+using Pkg
+pkg"registry add https://github.com/schlichtanders/SchlichtandersJuliaRegistry.jl"
+pkg"add Continuables"
+```
 
 # Example of a Continuable
 
-Consider the following trivial wrappers around a range iterator 1:n.
+Let's define our fist continuable by wrapping a simple range iterator ``1:n``.
 
 ```julia
 using Continuables
@@ -38,6 +44,8 @@ corange(n::Integer) = @cont begin
   end
 end
 ```
+
+That's it. Very straight forward and intuitive.
 
 Many standard functions work seamlessly for Continuables.
 
@@ -91,7 +99,7 @@ nth(5, @i2c 4:10) == 8
 # further defined are ``takewhile``, ``drop``, ``dropwhile``, ``repeated`` and ``iterate``, as well as `groupby`.
 ```
 
-Note that Continuables do not support `iterate`, i.e. you cannot directly for-loop over a Continuable. There is just no direct way to implement `iterate` on top of Continuables. Give it a try. Instead, you have to convert it into an Array first using `collect`, or to a Channel using `aschannel`.
+Importantly, Continuables do not support `Base.iterate`, i.e. you cannot directly for-loop over a Continuable. There is just no direct way to implement `iterate` on top of Continuables. Give it a try. Instead, you have to convert it into an Array first using `collect`, or to a Channel using `aschannel`.
 
 The same holds true for `zip`, however we provide a convenience implementation where you can choose which interpretation you want to have
 ```julia

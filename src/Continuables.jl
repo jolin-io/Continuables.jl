@@ -33,6 +33,7 @@ export
 
 using ASTParser
 using DataTypesBasic
+using OrderedCollections
 
 include("utils.jl")
 include("itertools.jl")
@@ -480,7 +481,6 @@ end
 
 # the interface is different from Itertools.jl
 # we directly return an OrderedDictionary instead of a iterable of values only
-import DataStructures.OrderedDict
 
 """
   group elements of `continuable` by `by`, aggregating immediately with `op2`/`op1`

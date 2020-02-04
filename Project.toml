@@ -1,7 +1,7 @@
 name = "Continuables"
 uuid = "79afa230-ca09-11e8-120b-5decf7bf5e25"
 authors = ["Sahm Stephan <stephan.sahm@gmx.de>"]
-version = "0.3.0"
+version = "0.3.1"
 
 [deps]
 ASTParser = "3311a090-b55d-11e9-176d-dbdfc6a88253"

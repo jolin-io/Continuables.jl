@@ -27,11 +27,11 @@ export
   @Ref, stoppable, stop,
   singleton, repeated, iterate,
   aschannel, ascontinuable, i2c, @i2c,
-  reduce, reduce!, zip, product, chain, flatten, cycle, foreach, map, all, any,
+  reduce, reduce!, zip, product, chain, flatten, cycle, foreach, map, all, any, sum, prod,
   take, takewhile, drop, dropwhile, partition, groupbyreduce, groupby,
   nth
 
-using ASTParser
+using ExprParsers
 using DataTypesBasic
 using OrderedCollections
 
@@ -66,7 +66,7 @@ end
 Continuable(f; kwargs...) = Continuable{Any}(f; kwargs...)
 (c::Continuable)(cont) = c.f(cont)
 
-include("./syntax.jl")  # some require the Continuable definition, hence here
+include("./syntax.jl")  # parts of syntax.jl require the Continuable definition, hence here
 
 const length = Base.length
 length(c::Continuable{Elem, Length, Size}) where {Elem, Length <: Nothing, Size <: Tuple} = prod(c.size)
@@ -98,7 +98,7 @@ _get_csize(c::Continuable{<:Any, Nothing}) = 0
 _get_csize(c::Continuable{<:Any, Base.IsInfinite}) = 0
 _get_csize(c::Continuable{<:Any, <:Integer}) = c.length
 
-aschannel(continuable::Continuable{Elem}) where Elem = Channel{Elem}(size=_get_csize(continuable)) do channel
+aschannel(continuable::Continuable{Elem}) where Elem = Channel{Elem}(_get_csize(continuable)) do channel
   continuable() do x
     put!(channel, x)
   end
@@ -231,6 +231,11 @@ function reduce!(op!, continuable::Continuable, acc)
   end
   acc
 end
+
+const sum = Base.sum
+sum(c::Continuable) = reduce(+, c)
+const prod = Base.prod
+prod(c::Continuable) = reduce(*, c)
 
 const all = Base.all
 @Ref function all(continuable::Continuable; lazy=true)

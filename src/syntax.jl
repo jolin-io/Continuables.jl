@@ -1,4 +1,4 @@
-using ASTParser
+using ExprParsers
 using SimpleMatch
 
 # @Ref
@@ -6,21 +6,21 @@ using SimpleMatch
 
 # TODO also replace ``::Ref`` annotations. Currently only ``r = Ref(2)`` assignments are replaced.
 
-const _parser = Matchers.AnyOf(Parsers.NestedDot(), Parsers.Function())
+const _parser = EP.AnyOf(EP.NestedDot(), EP.Function())
 
 # entrypoint - start with empty list of substitutions
 refify!(expr::Expr) = refify!(expr, Vector{Symbol}())
 
 # map Expr to Parsers
 refify!(any, ::Vector{Symbol}) = ()  # if there is no expression (or Vector, see below), we cannot refify anything
-refify!(expr::Expr, Refs::Vector{Symbol}) = refify!(expr, Refs, @TryCatch ParseError _parser(expr))
+refify!(expr::Expr, Refs::Vector{Symbol}) = refify!(expr, Refs, @TryCatch ParseError parse_expr(_parser, expr))
 
 
 # if specific parser was detected, then dispatch directly on Parsed result
 refify!(expr::Expr, Refs::Vector{Symbol}, parsed::Success{P}) where P = refify!(expr, Refs, parsed.value)
 
 # Specific Parsers
-function refify!(expr::Expr, Refs::Vector{Symbol}, nesteddot_parsed::Parsers.NestedDot_Parsed)
+function refify!(expr::Expr, Refs::Vector{Symbol}, nesteddot_parsed::EP.NestedDot_Parsed)
   # refify only most left dot expression ``nesteddot_parsed.base``, i.e. the object which is originally accessed
   @match(nesteddot_parsed.base) do f
     # if `nesteddot_parsed.base` is a Symbol, we cannot do in-place replacement with refify! but can only changed the parsed result
@@ -30,15 +30,15 @@ function refify!(expr::Expr, Refs::Vector{Symbol}, nesteddot_parsed::Parsers.Nes
   end
 
   # as not everything could be replaced inplace, we still have to inplace-replace the whole parsed expression
-  newexpr = toAST(nesteddot_parsed)
+  newexpr = to_expr(nesteddot_parsed)
   expr.head = newexpr.head
   expr.args = newexpr.args
 end
 
-function refify!(expr::Expr, Refs::Vector{Symbol}, function_parsed::Parsers.Function_Parsed)
+function refify!(expr::Expr, Refs::Vector{Symbol}, function_parsed::EP.Function_Parsed)
   # when going into a function, we need to ignore the function parameter names from Refs as they are new variables, not related to the Refs
-  args = [Parsers.Arg()(arg) for arg in function_parsed.args]
-  kwargs = [Parsers.Arg()(kwarg) for kwarg in function_parsed.kwargs]
+  args = [parse_expr(EP.Arg(), arg) for arg in function_parsed.args]
+  kwargs = [parse_expr(EP.Arg(), kwarg) for kwarg in function_parsed.kwargs]
 
   # recurse into any default arguments
   for arg in [args; kwargs]
@@ -61,7 +61,7 @@ function refify!(expr::Expr, Refs::Vector{Symbol}, function_parsed::Parsers.Func
   # hence we have to replace the whole expression
   function_parsed.args = args
   function_parsed.kwargs = kwargs
-  newexpr = toAST(function_parsed)
+  newexpr = to_expr(function_parsed)
   expr.head = newexpr.head
   expr.args = newexpr.args
 end
@@ -75,16 +75,16 @@ end
 function refify!(expr::Expr, Refs::Vector{Symbol}, ::Failure{<:Any})
   # important to use Base.enumerate as plain enumerate would bring Base.enumerate into namespace, however we want to create an own const link
   for (i, a) in Base.enumerate(expr.args)
-    Ref_assignment_parser = Parsers.Assignment(
-      left = Parsers.Symbol(),
-      right = Parsers.Call(
+    Ref_assignment_parser = EP.Assignment(
+      left = EP.anysymbol,
+      right = EP.Call(
         name = :Ref,
       ),
     )
-    parsed = @TryCatch ParseError Ref_assignment_parser(a)
+    parsed = @TryCatch ParseError parse_expr(Ref_assignment_parser, a)
     if issuccess(parsed)
       # create new Refs to properly handle subexpressions with Refs (so that no sideeffects occur)
-      Refs = Symbol[Refs; parsed.value.left.symbol]
+      Refs = Symbol[Refs; parsed.value.left]
     else
       substituted = false
 
@@ -157,7 +157,7 @@ macro cont(elemtype, length, size, expr)
 end
 
 function cont_expr(expr::Expr; elemtype=Any, length=nothing, size=nothing)
-  if issuccess(@TryCatch ParseError Parsers.Function()(expr))
+  if issuccess(@TryCatch ParseError parse_expr(EP.Function(), expr))
     cont_funcexpr(expr; elemtype = elemtype, length = length, size = size)
   else
     quote
@@ -177,7 +177,7 @@ function _extract_symbol(a)
 end
 
 function cont_funcexpr(expr::Expr; elemtype=Any, length=nothing, size=nothing)
-  func_parsed = Parsers.Function()(expr)
+  func_parsed = parse_expr(EP.Function(), expr)
   @assert Base.all(func_parsed.args) do s
     _extract_symbol(s) != :cont
   end "No function parameter can be called ``cont`` for @cont to apply."
@@ -186,5 +186,5 @@ function cont_funcexpr(expr::Expr; elemtype=Any, length=nothing, size=nothing)
   func_parsed.body = :(Continuables.Continuable{$elemtype}(cont -> $(func_parsed.body); length=$length, size=$size))
 
   # make Expr
-  toAST(func_parsed)
+  to_expr(func_parsed)
 end

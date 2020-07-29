@@ -1,10 +1,11 @@
 using ExprParsers
+using DataTypesBasic
 using SimpleMatch
 
 # @Ref
 # ====
 
-# TODO also replace ``::Ref`` annotations. Currently only ``r = Ref(2)`` assignments are replaced.
+# TODO also replace `::Ref` annotations. Currently only `r = Ref(2)` assignments are replaced.
 
 const _parser = EP.AnyOf(EP.NestedDot(), EP.Function())
 
@@ -17,11 +18,11 @@ refify!(expr::Expr, Refs::Vector{Symbol}) = refify!(expr, Refs, @TryCatch ParseE
 
 
 # if specific parser was detected, then dispatch directly on Parsed result
-refify!(expr::Expr, Refs::Vector{Symbol}, parsed::Success{P}) where P = refify!(expr, Refs, parsed.value)
+refify!(expr::Expr, Refs::Vector{Symbol}, parsed::Identity{P}) where P = refify!(expr, Refs, parsed.value)
 
 # Specific Parsers
 function refify!(expr::Expr, Refs::Vector{Symbol}, nesteddot_parsed::EP.NestedDot_Parsed)
-  # refify only most left dot expression ``nesteddot_parsed.base``, i.e. the object which is originally accessed
+  # refify only most left dot expression `nesteddot_parsed.base`, i.e. the object which is originally accessed
   @match(nesteddot_parsed.base) do f
     # if `nesteddot_parsed.base` is a Symbol, we cannot do in-place replacement with refify! but can only changed the parsed result
     f(_) = nothing
@@ -72,7 +73,7 @@ end
 # core logic, capture each new Ref, substitute each old one
 # this has to be done on expr.args level, as Refs on the same level need to be available for replacement
 # Additionally, this has to be done on expr.args level because Symbols can only be replaced inplace on the surrounding Vector
-function refify!(expr::Expr, Refs::Vector{Symbol}, ::Failure{<:Any})
+function refify!(expr::Expr, Refs::Vector{Symbol}, ::Const{<:Any})
   # important to use Base.enumerate as plain enumerate would bring Base.enumerate into namespace, however we want to create an own const link
   for (i, a) in Base.enumerate(expr.args)
     Ref_assignment_parser = EP.Assignment(
@@ -139,26 +140,10 @@ macro cont(expr)
   expr = macroexpand(__module__, expr)  # get rid of maybe confusing macros
   esc(cont_expr(expr))
 end
-macro cont(elemtype, expr)
-  expr = macroexpand(__module__, expr)  # get rid of maybe confusing macros
-  esc(cont_expr(expr, elemtype = elemtype))
-end
-macro cont(elemtype, length, expr)
-  expr = macroexpand(__module__, expr)  # get rid of maybe confusing macros
-  if length isa Expr && length.head == :tuple  # support for tuple sizes as second argument
-    esc(cont_expr(expr, elemtype = elemtype, size = length))
-  else
-    esc(cont_expr(expr, elemtype = elemtype, length = length))
-  end
-end
-macro cont(elemtype, length, size, expr)
-  expr = macroexpand(__module__, expr)  # get rid of maybe confusing macros
-  esc(cont_expr(expr, elemtype = elemtype, length = length, size = size))
-end
 
-function cont_expr(expr::Expr; elemtype=Any, length=nothing, size=nothing)
+function cont_expr(expr::Expr)
   if issuccess(@TryCatch ParseError parse_expr(EP.Function(), expr))
-    cont_funcexpr(expr; elemtype = elemtype, length = length, size = size)
+    cont_funcexpr(expr)
   else
     quote
       Continuables.Continuable(cont -> $expr)
@@ -176,14 +161,14 @@ function _extract_symbol(a)
   end
 end
 
-function cont_funcexpr(expr::Expr; elemtype=Any, length=nothing, size=nothing)
+function cont_funcexpr(expr::Expr)
   func_parsed = parse_expr(EP.Function(), expr)
   @assert Base.all(func_parsed.args) do s
     _extract_symbol(s) != :cont
-  end "No function parameter can be called ``cont`` for @cont to apply."
+  end "No function parameter can be called `cont` for @cont to apply."
 
   # return Continuable instead
-  func_parsed.body = :(Continuables.Continuable{$elemtype}(cont -> $(func_parsed.body); length=$length, size=$size))
+  func_parsed.body = :(Continuables.Continuable(cont -> $(func_parsed.body)))
 
   # make Expr
   to_expr(func_parsed)

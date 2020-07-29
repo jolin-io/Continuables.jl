@@ -21,7 +21,7 @@ end
 
 same_expr(e1, e2) = e1 == e2
 function same_expr(e1::Expr, e2::Expr)
-  # don't differentiate between ``f(a) = a`` and ``function f(a); a; end``
+  # don't differentiate between `f(a) = a` and `function f(a); a; end`
   e1.head == :function && (e1.head = :(=))
   e2.head == :function && (e2.head = :(=))
   @iftrue e1.head == e2.head

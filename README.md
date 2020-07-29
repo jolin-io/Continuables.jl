@@ -1,13 +1,19 @@
 # Continuables
 
-TLDR: Python / C# ``yield`` with performance matching plain Julia iterators  (i.e. unbelievably fast)
+[![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://schlichtanders.github.io/Continuables.jl/stable)
+[![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://schlichtanders.github.io/Continuables.jl/dev)
+[![Build Status](https://github.com/schlichtanders/Continuables.jl/workflows/CI/badge.svg)](https://github.com/schlichtanders/Continuables.jl/actions)
+[![Coverage](https://codecov.io/gh/schlichtanders/Continuables.jl/branch/master/graph/badge.svg)](https://codecov.io/gh/schlichtanders/Continuables.jl)
 
-Continuables are generator-like higher-order functions which take a continuation as an extra argument. The key macro provided by the package is `@cont` which will give access to the special function ``cont`` within its scope and wraps the computation in a special Type ``Continuables.Continuable``.
-It is best to think of ``cont`` in the sense of ``yield`` from Python's Generators. It generates values and takes feedback from the outer process as return value.
+
+TLDR: Python / C# `yield` with performance matching plain Julia iterators  (i.e. unbelievably fast)
+
+Continuables are generator-like higher-order functions which take a continuation as an extra argument. The key macro provided by the package is `@cont` which will give access to the special function `cont` within its scope and wraps the computation in a special Type `Continuables.Continuable`.
+It is best to think of `cont` in the sense of `yield` from Python's Generators. It generates values and takes feedback from the outer process as return value.
 
 If you come from Python, use Continuables wherever you would use generators. If you are Julia-native, Continuables can be used instead of Julia's Channels in many place with drastic performance-improvements (really drastic: in the little benchmark example below it is 20 million times faster!).
 
-This package implements all standard functions like e.g. ``collect``, `reduce`, `any` and others. As well as functionalities known from `Base.Iterators` and [``IterTools.jl``](https://github.com/JuliaCollections/IterTools.jl) like `take`, `dropwhile`, `groupby`, `partition`, `nth` and others.
+This package implements all standard functions like e.g. `collect`, `reduce`, `any` and others. As well as functionalities known from `Base.Iterators` and [`IterTools.jl`](https://github.com/JuliaCollections/IterTools.jl) like `take`, `dropwhile`, `groupby`, `partition`, `nth` and others.
 
 
 **Outline**
@@ -15,7 +21,7 @@ This package implements all standard functions like e.g. ``collect``, `reduce`, 
 * [Continuables](#continuables)
 * [Installation](#installation)
 * [Example of a Continuable](#example-of-a-continuable)
-* [The ``@Ref`` macro](#the-ref-macro)
+* [The `@Ref` macro](#the-ref-macro)
 * [Benchmark](#benchmark)
 * [Related packages](#related-packages)
 <!-- TOC END -->
@@ -27,14 +33,14 @@ This package and some dependencies are not yet centrally registered, but availab
 
 ```julia
 using Pkg
-pkg"registry add https://github.com/JuliaRegistries/General"  # central julia repository
-pkg"registry add https://github.com/schlichtanders/SchlichtandersJuliaRegistry.jl"  # custom repository
+pkg"registry add https://github.com/JuliaRegistries/General"  # central julia registry
+pkg"registry add https://github.com/schlichtanders/SchlichtandersJuliaRegistry.jl"  # custom registry
 pkg"add Continuables"
 ```
 
 # Example of a Continuable
 
-Let's define our fist continuable by wrapping a simple range iterator ``1:n``.
+Let's define our fist continuable by wrapping a simple range iterator `1:n`.
 
 ```julia
 using Continuables
@@ -97,7 +103,7 @@ nth(3, ascontinuable(4:10)) == 6
 nth(4, i2c(4:10)) == 7
 nth(5, @i2c 4:10) == 8
 
-# further defined are ``takewhile``, ``drop``, ``dropwhile``, ``repeated`` and ``iterate``, as well as `groupby`.
+# further defined are `takewhile`, `drop`, `dropwhile`, `repeated` and `iterate`, as well as `groupby`.
 ```
 
 Importantly, Continuables do not support `Base.iterate`, i.e. you cannot directly for-loop over a Continuable. There is just no direct way to implement `iterate` on top of Continuables. Give it a try. Instead, you have to convert it into an Array first using `collect`, or to a Channel using `aschannel`.
@@ -111,7 +117,7 @@ zip(i2c(1:4), i2c(3:6), lazy=true)  # Default
 zip(i2c(1:4), i2c(3:6), lazy=false)
 ```
 
-Last but not least, you can call a Continuable directly. It is just a higher order function expecting a ``cont`` function to run its computation.
+Last but not least, you can call a Continuable directly. It is just a higher order function expecting a `cont` function to run its computation.
 
 ```julia
 continuable = corange(3)
@@ -120,14 +126,14 @@ foreach(print, continuable)  # 123
 continuable(print)  # 123
 ```
 
-# The ``@Ref`` macro
+# The `@Ref` macro
 
 As you already saw, for continuables we cannot use for-loops. Instead we use higher-order functions like `map`, `foreach`, `reduce` or `groupbyreduce` to work with Continuables.  
-Fortunately, julia supports beautiful ``do`` syntax for higher-order functions. In fact, ``do`` becomes the equivalent of ``for`` for continuables.
+Fortunately, julia supports beautiful `do` syntax for higher-order functions. In fact, `do` becomes the equivalent of `for` for continuables.
 
-However, importantly, a ``do``-block constructs an anonymous function and consequently what happens within the do-block has its own variable namespace! This is essential if you want to define your own Continuables. You cannot easily change an outer variable from within a do-block like you may have done it within a for-loop. The solution is to simply use julia's ``Ref`` object to get mutations instead of simple variable assignments. For example instead of `var_changing_every_loop = 0`, and an update `var_changing_every_loop += 1` you use `var_changing_every_loop = Ref(yourvalue)` and `var_changing_every_loop.x += 1`.
+However, importantly, a `do`-block constructs an anonymous function and consequently what happens within the do-block has its own variable namespace! This is essential if you want to define your own Continuables. You cannot easily change an outer variable from within a do-block like you may have done it within a for-loop. The solution is to simply use julia's `Ref` object to get mutations instead of simple variable assignments. For example instead of `var_changing_every_loop = 0`, and an update `var_changing_every_loop += 1` you use `var_changing_every_loop = Ref(yourvalue)` and `var_changing_every_loop.x += 1`.
 
-(If you would use something mutable instead like an Vector instead of the non-mutable Int here, you of course can directly work in place. I.e. say ``a = []``, then ``push!(a, i)`` will do the right thing also in a do-block).
+(If you would use something mutable instead like an Vector instead of the non-mutable Int here, you of course can directly work in place. I.e. say `a = []`, then `push!(a, i)` will do the right thing also in a do-block).
 
 For convenience, Continuables comes with a second macro `@Ref` which checks your code for `variable = Ref(value)` parts and replaces all plain assignments `var = newvalue` with `var.x = newvalue`. This makes for beautiful code. Let's implement reduce with it:
 
@@ -316,4 +322,4 @@ BenchmarkTools.Trial:
   evals/sample:     1
 ```
 
-I.e. you see it is an impressive factor of ``2.8e5`` slower on median compared to the plain range or the Continuables version. It is still a factor 100 faster than the current Channels version, but the Channel one is exceptionally slow (probably because of thread-safety). And in terms of memory allocation, ``@resumable`` is even the worst of all for this very simple computation.
+I.e. you see it is an impressive factor of `2.8e5` slower on median compared to the plain range or the Continuables version. It is still a factor 100 faster than the current Channels version, but the Channel one is exceptionally slow (probably because of thread-safety). And in terms of memory allocation, `@resumable` is even the worst of all for this very simple computation.

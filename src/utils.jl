@@ -8,7 +8,7 @@ stop() = throw(Stop)
 stop(ret) = throw(StopException(ret))
 
 """
-  contextmanager handling custom breakpoints with ``stop()``
+  contextmanager handling custom breakpoints with `stop()`
 
 This is usually only used within creating a new continuable from a previous one
 Examples
@@ -22,7 +22,7 @@ end
 function stoppable(func, continuable, default_return = nothing)
   try
     continuable(func)
-    default_return  # default returnvalue to be able to handle ``stop(returnvalue)`` savely
+    default_return  # default returnvalue to be able to handle `stop(returnvalue)` savely
   catch exc
     if !isa(exc, StopException)
       rethrow(exc)

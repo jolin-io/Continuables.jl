@@ -35,7 +35,7 @@ repeated
 iterated
 ```
 
-## Functionality
+## Common Helpers
 
 ```@docs
 collect
@@ -58,6 +58,6 @@ drop
 dropwhile
 partition
 groupbyreduce
-groupby,
+groupby
 nth
 ```

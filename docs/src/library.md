@@ -13,6 +13,7 @@ CurrentModule = Continuables
 Continuable
 @cont
 @Ref
+innerfunctype
 ```
 
 ## Conversions
@@ -24,12 +25,19 @@ i2c
 @i2c
 ```
 
-## Functionality
+## Factories
 
 ```@docs
+emptycontinuable
 singleton
 repeated
 iterated
+```
+
+## Functionality
+
+```@docs
+collect
 reduce
 reduce!
 zip

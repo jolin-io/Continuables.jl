@@ -668,6 +668,8 @@ length. This semantics is copied from [IterTools.jl](https://juliacollections.gi
 
 # Examples
 ```jldoctest
+julia> using Continuables
+
 julia> partition(i2c(1:10), 3) |> collect
 4-element Array{Any,1}:
  Any[1, 2, 3]
@@ -756,6 +758,8 @@ op1: f(element) = initial_accumulator
 
 # Examples
 ```jldoctest
+julia> using Continuables
+
 julia> groupbyreduce(x -> x % 4, @i2c(1:10), (x, y) -> x + y)
 OrderedCollections.OrderedDict{Any,Any} with 4 entries:
   1 => 15
@@ -800,6 +804,8 @@ Note that the interface is different from `IterTools.groupby`, as we directly re
 # Examples
 
 ```jldoctest
+julia> using Continuables
+
 julia> groupby(x -> x % 4, @i2c 1:10)
 OrderedCollections.OrderedDict{Any,Any} with 4 entries:
   1 => [1, 5, 9]
@@ -830,6 +836,8 @@ Extracts the `n`th element from the given continuable.
 
 # Examples
 ```jldoctest
+julia> using Continuables
+
 julia> nth(i2c(4:10), 3)
 6
 julia> nth(1, i2c(4:10))

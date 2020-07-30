@@ -94,6 +94,7 @@ end
   @test collect(cycle(i2c(1:3), 3)) == [1,2,3, 1,2,3, 1,2,3]
 
   @test collect(drop(i2c(1:10), 3)) == collect(drop(1:10, 3))
+  @test collect(drop(3, i2c(1:10))) == collect(drop(1:10, 3))
 
   @test nth(i2c(0:10), 8) == (0:10)[8]
   @test_throws ErrorException nth(12, i2c(0:10))

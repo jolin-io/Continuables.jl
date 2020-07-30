@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - License
 - Codecoverage
 
+### Added
+- introduced abstract type `AbstractContinuable` to enable other Continuable types with more specialized information about (e.g. you may know `Iterators.HasEltype` or `Iterators.IteratorSize`)
+
 ### Changed
 - License is now MIT
 

@@ -14,6 +14,7 @@ Continuable
 @cont
 @Ref
 innerfunctype
+AbstractContinuable
 ```
 
 ## Conversions

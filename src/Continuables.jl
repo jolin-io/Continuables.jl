@@ -23,7 +23,7 @@ https://github.com/JuliaCollections/Iterators.jl/blob/master/src/Iterators.jl.
 # TODO copy documentation strings
 module Continuables
 export
-  cont, @cont, Continuable, innerfunctype,
+  cont, @cont, AbstractContinuable, Continuable, innerfunctype,
   @Ref, stoppable, stop,
   emptycontinuable, singleton, repeated, iterated,
   aschannel, ascontinuable, i2c, @i2c,
@@ -47,6 +47,34 @@ include("itertools.jl")
 """
 cont(args...; kwargs...) = error("`cont` is reserved to be used within `Continuables.@cont`")
 
+"""
+    AbstractContinuable
+
+Abstract type which all continuable helper functions use for dispatch.
+
+The interface for a continuable just consists of
+```
+Base.foreach(cont, continuable::YourContinuable)
+```
+
+For julia 1.0 you further need to provide
+```
+(continuable::YourContinuable)(cont) = foreach(cont, continuable)
+```
+"""
+abstract type AbstractContinuable end
+
+"""
+    foreach(func, continuable)
+
+Runs the continuable with `func` as the continuation. This is the core interface of a continuable.
+
+It is especially handy when using `do` syntax.
+"""
+function Base.foreach(cont, ::AbstractContinuable)
+  error("You need to specialize `Base.foreach` for your custom Continuable type.")
+end
+
 
 """
   Continuable(func)
@@ -64,27 +92,14 @@ Continuable(function (cont)
 end)
 ```
 """
-struct Continuable{Func}
+struct Continuable{Func} <: AbstractContinuable
   f::Func
   # making sure typevar `Func` has always the correct meaning so that we can dispatch on it
   # otherwise one could construct `Continuable{Any}(func)` which would break dispatching on the typevariable.
   Continuable(f) = new{typeof(f)}(f)
 end
-(c::Continuable)(cont) = c.f(cont)
-
-include("./syntax.jl")  # parts of syntax.jl require the Continuable definition, hence here
-
-Base.IteratorSize(::Continuable) = Base.SizeUnknown()
-@Ref function Base.length(continuable::Continuable)
-  i = Ref(0)
-  continuable() do _
-    i += 1
-  end
-  i
-end
-
-Base.IteratorEltype(::Continuable{Any}) = Base.EltypeUnknown()
-Base.eltype(::Continuable) = Any
+Base.foreach(cont, c::Continuable) = c.f(cont)
+(c::Continuable)(cont) = foreach(cont, c)
 
 """
     innerfunctype(continuable)
@@ -109,15 +124,20 @@ function innerfunctype(continuable::Continuable)
 end
 
 
+
+include("./syntax.jl")  # parts of syntax.jl require the Continuable definition, hence here
+
+
+
 ## conversions ----------------------------------------------
 
 """
-    aschannel(continuable::Continuable) -> Channel
+    aschannel(continuable) -> Channel
 
 Convert the continuable into a channel. Performance is identical compared to when you would have build a Channel
 directly.
 """
-function aschannel(continuable::Continuable, size=0; elemtype=Any, taskref=nothing, spawn=false)
+function aschannel(continuable::AbstractContinuable, size=0; elemtype=Any, taskref=nothing, spawn=false)
   Channel{elemtype}(size, taskref=taskref, spawn=spawn) do channel
     continuable() do x
       put!(channel, x)
@@ -209,6 +229,25 @@ end
 
 # Continuable cannot implement Base.iterate efficiently
 
+try
+  # only in more recent julia, we can specialize call syntax for AbstractTypes
+  (c::AbstractContinuable)(cont) = foreach(cont, c)
+catch
+end
+
+Base.IteratorSize(::AbstractContinuable) = Base.SizeUnknown()
+@Ref function Base.length(continuable::AbstractContinuable)
+  i = Ref(0)
+  continuable() do _
+    i += 1
+  end
+  i
+end
+
+Base.IteratorEltype(::AbstractContinuable) = Base.EltypeUnknown()
+Base.eltype(::AbstractContinuable) = Any
+
+
 """
     collect(continuable[, n]) -> Vector
 
@@ -216,12 +255,12 @@ Constructs Vector out of the given Continuable. If also given the length `n` exp
 a Vector of respective is preallocated. IMPORTANTLY `n` needs to be the true length of the continuable.
 Smaller `n` will result in error.
 """
-function Base.collect(c::Continuable)
+function Base.collect(c::AbstractContinuable)
   everything = Vector(undef, 0)
   reduce!(push!, c, init = everything)
 end
 
-@Ref function Base.collect(c::Continuable, n)
+@Ref function Base.collect(c::AbstractContinuable, n)
   a = Vector(undef, n)
   # unfortunately the nested call of enumerate results in slower code, hence we have a manual index here
   # this is so drastically that for small `n` a preallocate version with enumerate would be slower than the non-preallocate version
@@ -239,7 +278,7 @@ end
 Constructs new Continuable with elements `(i, x)` for each `x` in the continuable, where `i` starts at `1` and
 increments by `1` for each element.
 """
-@cont @Ref function Base.enumerate(continuable::Continuable)
+@cont @Ref function Base.enumerate(continuable::AbstractContinuable)
   i = Ref(1)
   continuable() do x
     cont((i, x))
@@ -248,24 +287,18 @@ increments by `1` for each element.
 end
 
 """
-    foreach(func, continuable)
-
-Runs the continuable with `func` as the continuation. Especially handy with `do` syntax.
-"""
-Base.foreach(func, continuable::Continuable) = continuable(func)
-"""
     map(func, continuable)
 
 Constructs new Continuable where the given `func` was applied to each element.
 """
-Base.map(func, continuable::Continuable) = @cont continuable(x -> cont(func(x)))
+Base.map(func, continuable::AbstractContinuable) = @cont continuable(x -> cont(func(x)))
 
 """
     filter(predicate, continuable)
 
 Constructs new Continuable where only elements `x` with `predicate(x) == true` are kept.
 """
-@cont function Base.filter(bool, continuable::Continuable)
+@cont function Base.filter(bool, continuable::AbstractContinuable)
   continuable() do x
     if bool(x)
       cont(x)
@@ -278,7 +311,7 @@ end
 
 Like Base.reduce this will apply `operator` iteratively to combine all elements into one accumulated result.
 """
-Base.reduce(op, continuable::Continuable; init = nothing) = foldl_continuable(op, continuable, init)
+Base.reduce(op, continuable::AbstractContinuable; init = nothing) = foldl_continuable(op, continuable, init)
 
 """
     reduce(operator, continuable; [init])
@@ -286,7 +319,7 @@ Base.reduce(op, continuable::Continuable; init = nothing) = foldl_continuable(op
 Like Base.foldl this will apply `operator` iteratively to combine all elements into one accumulated result.
 The order is guaranteed to be left to right.
 """
-Base.foldl(op, continuable::Continuable; init = nothing) = foldl_continuable(op, continuable, init)
+Base.foldl(op, continuable::AbstractContinuable; init = nothing) = foldl_continuable(op, continuable, init)
 
 struct EmptyStart end
 @Ref function foldl_continuable(op, continuable, init::Nothing)
@@ -317,14 +350,14 @@ If no `init` is given
 else
     `init` is the explicit state and will be passed to `op!` as first argument (the accumulator)
 """
-function reduce!(op!, continuable::Continuable; init = nothing)
+function reduce!(op!, continuable::AbstractContinuable; init = nothing)
   if isnothing(init)
     continuable(op!)
   else
     reduce!(op!, continuable, init)
   end
 end
-function reduce!(op!, continuable::Continuable, acc)
+function reduce!(op!, continuable::AbstractContinuable, acc)
   continuable() do x
     op!(acc, x)
   end
@@ -336,14 +369,14 @@ end
 
 sums up all elements
 """
-Base.sum(c::Continuable) = reduce(+, c)
+Base.sum(c::AbstractContinuable) = reduce(+, c)
 
 """
     sum(continuable)
 
 multiplies up all elements
 """
-Base.prod(c::Continuable) = reduce(*, c)
+Base.prod(c::AbstractContinuable) = reduce(*, c)
 
 """
     all([func, ]continuable; [lazy])
@@ -354,7 +387,7 @@ If a function `func` is given, it is first applied to the elements before compar
 If `lazy=true` (default) the Continuable will only be evaluated until the first `false` value.
 Elseif `lazy=false` all elements of the Continuable will be combined.
 """
-@Ref function Base.all(continuable::Continuable; lazy=true)
+@Ref function Base.all(continuable::AbstractContinuable; lazy=true)
   if lazy
     stoppable(continuable, true) do b
       if !b
@@ -369,7 +402,7 @@ Elseif `lazy=false` all elements of the Continuable will be combined.
     b
   end
 end
-Base.all(f, continuable::Continuable; kwargs...) = all(map(f, continuable); kwargs...)
+Base.all(f, continuable::AbstractContinuable; kwargs...) = all(map(f, continuable); kwargs...)
 
 
 """
@@ -381,7 +414,7 @@ If a function `func` is given, it is first applied to the elements before compar
 If `lazy=true` (default) the Continuable will only be evaluated until the first `true` value.
 Elseif `lazy=false` all elements of the Continuable will be combined.
 """
-@Ref function Base.any(continuable::Continuable; lazy=true)
+@Ref function Base.any(continuable::AbstractContinuable; lazy=true)
   if lazy
     stoppable(continuable, false) do b
       if b
@@ -397,7 +430,7 @@ Elseif `lazy=false` all elements of the Continuable will be combined.
     b
   end
 end
-Base.any(f, continuable::Continuable; kwargs...) = any(map(f, continuable); kwargs...)
+Base.any(f, continuable::AbstractContinuable; kwargs...) = any(map(f, continuable); kwargs...)
 
 ## zip ----------------------------
 # zip is the only method which seems to be unimplementable with continuations
@@ -410,7 +443,7 @@ Zipping continuables via intermediate array representation
 
 CAUTION: loads everything into memory
 """
-azip(cs...) = @cont begin
+azip(cs::AbstractContinuable...) = @cont begin
   # not possible with continuations... bring it to memory and apply normal zip
   array_cs = collect.(cs)
   for t in zip(array_cs...)
@@ -423,7 +456,7 @@ end
 
 Zipping continuables via Channel
 """
-chzip(cs...) = @cont begin
+chzip(cs::AbstractContinuable...) = @cont begin
   # or use aschannel and iterate
   channel_cs = aschannel.(cs)
   for t in zip(channel_cs...)
@@ -445,7 +478,7 @@ Elseif `lazy=false`, it will use Arrays instead.
     `zip` on Continuables is not performant, but will fallback to either Channels (`lazy=true`, default) which are
     very slow, or Arrays (`lazy=false`) which will load everything into Memory.
 """
-function Base.zip(cs::Continuable...; lazy=true)
+function Base.zip(cs::AbstractContinuable...; lazy=true)
   if lazy
     chzip(cs...)
   else
@@ -459,11 +492,11 @@ end
 Constructs new Continuable which loops through the given continuable.
 If `n` is given, it will loop `n` times, otherwise endlessly.
 """
-cycle(continuable::Continuable) = @cont while true
+cycle(continuable::AbstractContinuable) = @cont while true
   continuable(cont)
 end
 
-cycle(continuable::Continuable, n::Integer) = @cont for _ in 1:n
+cycle(continuable::AbstractContinuable, n::Integer) = @cont for _ in 1:n
   continuable(cont)
 end
 
@@ -480,10 +513,10 @@ to how Iterators.product work for iterables.
 Mind that `product()` will still return an empty iterator instead of an empty Continuable.
 Use [`emptycontinuable`](@ref) instead if you need an empty Continuable.
 """
-product(c1::Continuable) = c1
+product(c1::AbstractContinuable) = c1
 
 # note this function in fact returns a continuable, however it is written as highlevel as that no explicit "f(...) = cont -> begin ... end" is needed
-product(c1::Continuable, c2::Continuable) = @cont begin
+product(c1::AbstractContinuable, c2::AbstractContinuable) = @cont begin
   c1() do x
     c2() do y
       cont((x,y))
@@ -492,7 +525,7 @@ product(c1::Continuable, c2::Continuable) = @cont begin
 end
 
 # this method is underscored because we assume the first continuation to deliver tuples and not values
-_product(c1::Continuable, c2::Continuable) = @cont begin
+_product(c1::AbstractContinuable, c2::AbstractContinuable) = @cont begin
   c1() do t
     c2() do x
       cont(tuple(t..., x))
@@ -500,7 +533,7 @@ _product(c1::Continuable, c2::Continuable) = @cont begin
   end
 end
 
-@Ref function product(c1::Continuable, c2::Continuable, cs::Vararg{<:Continuable})
+@Ref function product(c1::AbstractContinuable, c2::AbstractContinuable, cs::Vararg{<:AbstractContinuable})
   acc = Ref(product(c1, c2))  # make first into singleton tuple to start recursion
   for continuable in cs
     acc = _product(acc, continuable)
@@ -517,7 +550,7 @@ Analog to Iterators.flatten.
 
 For iterables of continuable use `Continuables.chain(iterable_of_continuables...)` instead.
 """
-@cont function flatten(continuable::Continuable)
+@cont function flatten(continuable::AbstractContinuable)
   continuable() do subcontinuable
     subcontinuable(cont)
   end
@@ -531,7 +564,7 @@ When given Continuables it will construct a new continuable by concatinating all
 When given anything else it will default to use `Iterator.flatten`.
 """
 chain(iterables::Vararg) = flatten(iterables)
-chain(cs::Vararg{<:Continuable}) = @cont begin
+chain(cs::Vararg{<:AbstractContinuable}) = @cont begin
   for continuable in cs
     continuable(cont)
   end
@@ -547,7 +580,7 @@ end
 Construct a new Continuable which only yields the first `n` elements.
 `n` can be larger as the total length, no problem.
 """
-@cont @Ref function take(continuable::Continuable, n::Integer)
+@cont @Ref function take(continuable::AbstractContinuable, n::Integer)
   i = Ref(0)
   stoppable(continuable) do x
     i += 1
@@ -557,7 +590,7 @@ Construct a new Continuable which only yields the first `n` elements.
     cont(x)
   end
 end
-take(n::Integer, continuable::Continuable) = take(continuable, n)
+take(n::Integer, continuable::AbstractContinuable) = take(continuable, n)
 
 """
     takewhile(predicate, continuable)
@@ -568,7 +601,7 @@ If given a Continuable, it constructs a new Continuable yielding elements until 
 Also implements a respective functionality for iterables for convenience.
 """
 takewhile(bool, iterable) = TakeWhile(bool,  iterable)
-@cont function takewhile(bool, continuable::Continuable)
+@cont function takewhile(bool, continuable::AbstractContinuable)
   stoppable(continuable) do x
     if !bool(x)
       stop()
@@ -585,7 +618,7 @@ end
 Construct a new Continuable which yields all elements but the first `n`.
 `n` can be larger as the total length, no problem.
 """
-@cont @Ref function drop(continuable::Continuable, n::Integer)
+@cont @Ref function drop(continuable::AbstractContinuable, n::Integer)
   i = Ref(0)
   continuable() do x
     i += 1
@@ -594,7 +627,7 @@ Construct a new Continuable which yields all elements but the first `n`.
     end
   end
 end
-drop(n::Integer, continuable::Continuable) = drop(continuable, n)
+drop(n::Integer, continuable::AbstractContinuable) = drop(continuable, n)
 
 """
     dropwhile(predicate, continuable)
@@ -605,7 +638,7 @@ If given a Continuable, it constructs a new Continuable yielding elements until 
 Also implements a respective functionality for iterables for convenience.
 """
 dropwhile(bool, iterable) = DropWhile(bool, iterable)
-@cont @Ref function dropwhile(bool, continuable::Continuable)
+@cont @Ref function dropwhile(bool, continuable::AbstractContinuable)
   dropping = Ref(true)
   continuable() do x
     if dropping
@@ -616,16 +649,6 @@ dropwhile(bool, iterable) = DropWhile(bool, iterable)
       cont(x)
     end
   end
-end
-
-function _takewhile_isassigned(vec::Vector)
-  n = length(vec)
-  for i in 1:n
-    if !isassigned(vec, i)
-      return vec[1:(i-1)]
-    end
-  end
-  return vec
 end
 
 
@@ -661,7 +684,7 @@ julia> partition(i2c(1:10), 3, 3) |> collect
   Any[7, 8, 9]
 ```
 """
-@cont @Ref function partition(continuable::Continuable, n::Integer)
+@cont @Ref function partition(continuable::AbstractContinuable, n::Integer)
   i = Ref(1)
   part = Ref(Vector(undef, n))
   continuable() do x
@@ -680,7 +703,7 @@ julia> partition(i2c(1:10), 3, 3) |> collect
   end
 end
 
-@cont @Ref function partition(continuable::Continuable, n::Integer, step::Integer)
+@cont @Ref function partition(continuable::AbstractContinuable, n::Integer, step::Integer)
   i = Ref(0)
   n_overlap = n - step
   part = Ref(Vector(undef, n))
@@ -704,6 +727,15 @@ end
   end
 end
 
+function _takewhile_isassigned(vec::Vector)
+  n = length(vec)
+  for i in 1:n
+    if !isassigned(vec, i)
+      return vec[1:(i-1)]
+    end
+  end
+  return vec
+end
 
 
 """
@@ -736,7 +768,7 @@ OrderedCollections.OrderedDict{Any,Any} with 4 entries:
   0 => 17
 ```
 """
-function groupbyreduce(by, continuable::Continuable, op2, op1=identity)
+function groupbyreduce(by, continuable::AbstractContinuable, op2, op1=identity)
   d = OrderedDict()
   continuable() do x
     key = by(x)
@@ -774,7 +806,7 @@ OrderedCollections.OrderedDict{Any,Any} with 4 entries:
   0 => [4, 8]
 ```
 """
-groupby(f, continuable::Continuable) = groupbyreduce(f, continuable, push!, x -> [x])
+groupby(f, continuable::AbstractContinuable) = groupbyreduce(f, continuable, push!, x -> [x])
 groupby(f, iterable) = groupby(f, ascontinuable(iterable))
 
 
@@ -802,7 +834,7 @@ julia> nth(1, i2c(4:10))
 4
 ```
 """
-@Ref function nth(continuable::Continuable, n::Integer)
+@Ref function nth(continuable::AbstractContinuable, n::Integer)
   i = Ref(0)
   ret = stoppable(continuable) do x
     i += 1
@@ -816,6 +848,6 @@ julia> nth(1, i2c(4:10))
   end
   ret
 end
-nth(n::Integer, continuable::Continuable) = nth(continuable, n)
+nth(n::Integer, continuable::AbstractContinuable) = nth(continuable, n)
 
 end  # module

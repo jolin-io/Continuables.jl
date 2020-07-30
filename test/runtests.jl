@@ -42,6 +42,8 @@ end
 # Check Continuables standard Interface
 # =====================================
 @testset "standard interface" begin
+  @test_throws ErrorException cont(1)
+
   cont1 = @cont cont(1)
   @test collect(cont1) == [1]
   @test collect(singleton(3)) == [3]
@@ -54,7 +56,7 @@ end
   @test collect(repeated(() -> 4, 3)) == collect(take(repeated(() -> 4), 3))
   @test nth(@i2c(0:10), 8) == (0:10)[8]
 
-
+  @test Base.IteratorSize(@i2c 1:4) == Base.SizeUnknown()
   @test length(@i2c 3:20) == 18
 
   @test collect(product(@i2c(1:10), @i2c(1:3))) == [(i,j) for i in 1:10 for j in 1:3]

@@ -44,6 +44,7 @@ evaluates to the value of `expr`. Not exported, useful for implementing iterator
 
 ```jldoctest
 julia> using Continuables
+
 julia> Continuables.@ifsomething iterate(1:2)
 (1, 1)
 julia> let elt, state = Continuables.@ifsomething iterate(1:2, 2); println("not reached"); end

@@ -155,14 +155,14 @@ ascontinuable(iterable) = @cont foreach(cont, iterable)
 """
     i2c(iterable)
 
-Alias for [ascontinuable](@ref). "i2c" is meant as abbreviation for "iterable to continuable".
+Alias for [`ascontinuable`](@ref). "i2c" is meant as abbreviation for "iterable to continuable".
 Also comes in macro form as [`@i2c`](@ref).
 """
 const i2c = ascontinuable
 """
     @i2c iterable
 
-Alias for [ascontinuable](@ref). "i2c" is meant as abbreviation for "iterable to continuable".
+Alias for [`ascontinuable`](@ref). "i2c" is meant as abbreviation for "iterable to continuable".
 Also comes in function form as [`i2c`](@ref).
 """
 macro i2c(expr)
@@ -682,10 +682,10 @@ julia> partition(i2c(1:10), 5, 2) |> collect
  Any[3, 4, 5, 6, 7]
  Any[5, 6, 7, 8, 9]
 julia> partition(i2c(1:10), 3, 3) |> collect
- 4-element Array{Any,1}:
-  Any[1, 2, 3]
-  Any[4, 5, 6]
-  Any[7, 8, 9]
+3-element Array{Any,1}:
+ Any[1, 2, 3]
+ Any[4, 5, 6]
+ Any[7, 8, 9]
 ```
 """
 @cont @Ref function partition(continuable::AbstractContinuable, n::Integer)

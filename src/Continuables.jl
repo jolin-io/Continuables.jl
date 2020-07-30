@@ -25,7 +25,7 @@ module Continuables
 export
   cont, @cont, Continuable,
   @Ref, stoppable, stop,
-  singleton, repeated, iterate,
+  singleton, repeated, iterated,
   aschannel, ascontinuable, i2c, @i2c,
   reduce, reduce!, zip, product, chain, flatten, cycle, foreach, map, all, any, sum, prod,
   take, takewhile, drop, dropwhile, partition, groupbyreduce, groupby,
@@ -118,7 +118,7 @@ end
   end
 end
 
-@cont @Ref function iterate(f, x)
+@cont @Ref function iterated(f, x)
   a = Ref(x)
   while true
     a = f(a)

@@ -734,6 +734,7 @@ OrderedCollections.OrderedDict{Any,Any} with 4 entries:
   2 => 23
   3 => 15
   0 => 17
+```
 """
 function groupbyreduce(by, continuable::Continuable, op2, op1=identity)
   d = OrderedDict()

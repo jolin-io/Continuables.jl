@@ -61,6 +61,7 @@ For julia 1.0 you further need to provide
 ```
 (continuable::YourContinuable)(cont) = foreach(cont, continuable)
 ```
+which is provided automatically for more recent julia versions.
 """
 abstract type AbstractContinuable end
 
@@ -218,6 +219,7 @@ Constructs an infinite Continuable which
 """
 @cont @Ref function iterated(f, x)
   a = Ref(x)
+  cont(a)
   while true
     a = f(a)
     cont(a)
@@ -534,7 +536,7 @@ _product(c1::AbstractContinuable, c2::AbstractContinuable) = @cont begin
 end
 
 @Ref function product(c1::AbstractContinuable, c2::AbstractContinuable, cs::Vararg{<:AbstractContinuable})
-  acc = Ref(product(c1, c2))  # make first into singleton tuple to start recursion
+  acc = Ref{Any}(product(c1, c2))  # make first into singleton tuple to start recursion
   for continuable in cs
     acc = _product(acc, continuable)
   end

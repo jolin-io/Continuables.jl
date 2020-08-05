@@ -14,7 +14,7 @@ refify!(expr::Expr) = refify!(expr, Vector{Symbol}())
 
 # map Expr to Parsers
 refify!(any, ::Vector{Symbol}) = ()  # if there is no expression (or Vector, see below), we cannot refify anything
-refify!(expr::Expr, Refs::Vector{Symbol}) = refify!(expr, Refs, @TryCatch ParseError parse_expr(_parser, expr))
+refify!(expr::Expr, Refs::Vector{Symbol}) = refify!(expr, Refs, @TryCatch EP.ParseError parse_expr(_parser, expr))
 
 
 # if specific parser was detected, then dispatch directly on Parsed result
@@ -82,7 +82,7 @@ function refify!(expr::Expr, Refs::Vector{Symbol}, ::Const{<:Any})
         name = :Ref,
       ),
     )
-    parsed = @TryCatch ParseError parse_expr(Ref_assignment_parser, a)
+    parsed = @TryCatch EP.ParseError parse_expr(Ref_assignment_parser, a)
     if issuccess(parsed)
       # create new Refs to properly handle subexpressions with Refs (so that no sideeffects occur)
       Refs = Symbol[Refs; parsed.value.left]
@@ -190,7 +190,7 @@ macro cont(expr)
 end
 
 function cont_expr(expr::Expr)
-  if issuccess(@TryCatch ParseError parse_expr(EP.Function(), expr))
+  if issuccess(@TryCatch EP.ParseError parse_expr(EP.Function(), expr))
     cont_funcexpr(expr)
   else
     quote

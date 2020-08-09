@@ -13,6 +13,8 @@ CurrentModule = Continuables
 Continuable
 @cont
 @Ref
+innerfunctype
+AbstractContinuable
 ```
 
 ## Conversions
@@ -24,12 +26,19 @@ i2c
 @i2c
 ```
 
-## Functionality
+## Factories
 
 ```@docs
+emptycontinuable
 singleton
 repeated
-iterate
+iterated
+```
+
+## Common Helpers
+
+```@docs
+collect
 reduce
 reduce!
 zip
@@ -49,14 +58,6 @@ drop
 dropwhile
 partition
 groupbyreduce
-groupby,
+groupby
 nth
 ```
-
-cont, @cont, Continuable,
-@Ref, stoppable, stop,
-singleton, repeated, iterate,
-aschannel, ascontinuable, i2c, @i2c,
-reduce, reduce!, zip, product, chain, flatten, cycle, foreach, map, all, any, sum, prod,
-take, takewhile, drop, dropwhile, partition, groupbyreduce, groupby,
-nth

@@ -15,6 +15,7 @@ If you come from Python, use Continuables wherever you would use generators. If 
 
 This package implements all standard functions like e.g. `collect`, `reduce`, `any` and others. As well as functionalities known from `Base.Iterators` and [`IterTools.jl`](https://github.com/JuliaCollections/IterTools.jl) like `take`, `dropwhile`, `groupby`, `partition`, `nth` and others.
 
+For convenience, all methods also work for plain iterables.
 
 ## Installation
 

@@ -11,8 +11,9 @@ stop(ret) = throw(StopException(ret))
   contextmanager handling custom breakpoints with `stop()`
 
 This is usually only used within creating a new continuable from a previous one
-Examples
-```
+
+# Examples
+```julia
 @cont stop_at4(continuable) = stoppable(continuable) do x
   x == 4 && stop()
   cont(x)
@@ -35,13 +36,18 @@ end
 
 
 """
-    IterTools.@ifsomething expr
+    Continuables.@ifsomething expr
 If `expr` evaluates to `nothing`, equivalent to `return nothing`, otherwise the macro
 evaluates to the value of `expr`. Not exported, useful for implementing iterators.
+
+# Example
+
 ```jldoctest
-julia> IterTools.@ifsomething iterate(1:2)
+julia> using Continuables
+
+julia> Continuables.@ifsomething iterate(1:2)
 (1, 1)
-julia> let elt, state = IterTools.@ifsomething iterate(1:2, 2); println("not reached"); end
+julia> let elt, state = Continuables.@ifsomething iterate(1:2, 2); println("not reached"); end
 ```
 """
 macro ifsomething(ex)

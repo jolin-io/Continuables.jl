@@ -114,6 +114,23 @@ function refify_symbol(sym::Symbol, Refs::Vector{Symbol})
   sym
 end
 
+"""
+    @Ref begin
+      a = Ref(2)
+      a + 3
+    end
+
+is translated to
+
+    begin
+      a = Ref(2)
+      a.x + 3
+    end
+
+So that you do not need to write `a.x`  or 'a[]' all the way.
+
+The macro works correctly with subfunctions shadowing the variables.
+"""
 macro Ref(expr)
   refify!(expr)
   esc(expr)
@@ -136,6 +153,37 @@ macro assert_noerror(expr, msg)
   end)
 end
 
+"""
+    @cont begin
+      cont(1)
+      cont(2)
+    end
+
+translates to
+
+    Continuable(function(cont)
+      cont(1)
+      cont(2)
+    end)
+
+Furthermore, also function syntax is especially supported
+
+    @cont function(a, b) begin
+      cont(a)
+      cont(b)
+    end
+
+is translated to
+
+    function(a, b)
+      Continuable(function(cont)
+        cont(1)
+        cont(2)
+      end)
+    end
+
+In summary, `@cont` wraps the return value into a Continuable.
+"""
 macro cont(expr)
   expr = macroexpand(__module__, expr)  # get rid of maybe confusing macros
   esc(cont_expr(expr))

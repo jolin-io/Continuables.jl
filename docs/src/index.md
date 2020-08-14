@@ -13,12 +13,9 @@ For convenience, all methods also work for plain iterables.
 
 ## Installation
 
-This package and some dependencies are not yet centrally registered, but available via a custom registry. All you need to install is the following:
-
+Install like
 ```julia
 using Pkg
-pkg"registry add https://github.com/JuliaRegistries/General"  # central julia registry
-pkg"registry add https://github.com/schlichtanders/SchlichtandersJuliaRegistry.jl"  # custom registry
 pkg"add Continuables"
 ```
 

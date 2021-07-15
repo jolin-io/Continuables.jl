@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2021-07-15
+### Changed
+- updated Compat for compatibility with newer DataTypesBasic release, which surprisingly breaks the support for Julia versions < 1.6, hence a breaking change
+
 ## [1.0.0] - 2020-07-29
 ### Added
 - GithubActions for CICD

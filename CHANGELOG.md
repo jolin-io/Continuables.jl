@@ -6,8 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+
+## [1.0.2] - 2022-07-19
 ### Changed
 - Compat compat now includes version 4
+- BenchmarkTools are now in Test dependencies
 
 ## [1.0.1] - 2021-07-15
 ### Changed

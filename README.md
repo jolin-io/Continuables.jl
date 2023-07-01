@@ -31,3 +31,22 @@ using Continuables
 ```
 
 For further information take a look at the [documentation](https://jolin-io.github.io/Continuables.jl/dev).
+
+## Example: flexible alternative to `walkdir`
+
+Sometimes you recursively want to read files, skipping certain directories and doing other individual adaptations. Using `Continuables` you get full flexibility with very well readable code and good performance:
+
+```julia
+list_all_juliafiles(path=abspath(".")) = @cont begin
+    if isfile(path)
+        endswith(path, ".jl") && cont(path)
+    elseif isdir(path)
+        basename(path) in (".git",) && return
+        for file in readdir(path)
+            foreach(cont, list_all_juliafiles(joinpath(path, file)))
+        end
+    end
+end
+
+collect(list_all_juliafiles())
+```

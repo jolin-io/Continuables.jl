@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.3] - 2023-07-01
+### Changed
+- generalized dependencies compat entries
+- removed Compat dependency
+
 ## [1.0.2] - 2022-07-19
 ### Changed
 - Compat compat now includes version 4

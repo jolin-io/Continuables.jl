@@ -31,7 +31,6 @@ export
   take, takewhile, drop, dropwhile, partition, groupbyreduce, groupby,
   nth
 
-using Compat
 using ExprParsers
 using DataTypesBasic
 using OrderedCollections
